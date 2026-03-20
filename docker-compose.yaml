@@ -2,14 +2,12 @@
 
 services:
   dev_postgres:
-    image: pgvector/pgvector:pg16
+    image: ghcr.io/twistingmercury/mnemonic-postgres:v1.0.0-dev
     restart: unless-stopped
     environment:
       POSTGRES_DB: mnemonic
       POSTGRES_USER: mnemonic
       POSTGRES_PASSWORD: mnemonic_dev
-    ports:
-      - "5433:5432"
     volumes:
       - dev_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,31 +18,14 @@ services:
     networks:
       - dev_network
 
-  migrate:
-    image: migrate/migrate
-    depends_on:
-      dev_postgres:
-        condition: service_healthy
-    volumes:
-      - ./src/migrations/postgres:/migrations:ro
-    command:
-      - "-path=/migrations"
-      - "-database=postgres://mnemonic:mnemonic_dev@dev_postgres:5432/mnemonic?sslmode=disable"
-      - "up"
-    networks:
-      - dev_network
-
   dev_neo4j:
-    image: neo4j:5
+    image: ghcr.io/twistingmercury/mnemonic-neo4j:v1.0.0-dev
     restart: unless-stopped
     environment:
       NEO4J_AUTH: neo4j/mnemonic_dev
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_dbms_security_procedures_unrestricted: apoc.*
       NEO4J_dbms_security_procedures_allowlist: apoc.*
-    ports:
-      - "7475:7474"
-      - "7688:7687"
     volumes:
       - dev_neo4j_data:/data
     healthcheck:
@@ -60,9 +41,9 @@ services:
     pull_policy: always
     restart: unless-stopped
     ports:
-      - "8080:8080"
-      - "8081:8081"
-      - "9090:9090"
+      - "8090:8080"
+      - "8091:8081"
+      - "9091:9090"
     environment:
       MNEMONIC_DATABASE_POSTGRES_HOST: dev_postgres
       MNEMONIC_DATABASE_POSTGRES_PASSWORD: mnemonic_dev
@@ -74,14 +55,39 @@ services:
       MNEMONIC_MCP_DEFAULT_SEARCH_THRESHOLD: 0.5
       MNEMONIC_LOGGING_LEVEL: debug
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       dev_neo4j:
         condition: service_healthy
       dev_postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/mnemonic", "--health"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev_network
+
+  dev_rest:
+    image: ghcr.io/twistingmercury/mnemonic-api:latest
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    environment:
+      MNEMONIC_DATABASE_POSTGRES_HOST: dev_postgres
+      MNEMONIC_DATABASE_POSTGRES_PASSWORD: mnemonic_dev
+      MNEMONIC_DATABASE_POSTGRES_SSL_MODE: disable
+      MNEMONIC_DATABASE_NEO4J_URI: bolt://dev_neo4j:7687
+      MNEMONIC_DATABASE_NEO4J_PASSWORD: mnemonic_dev
+      MNEMONIC_OPENAI_API_KEY: ${MNEMONIC_OPENAI_API_KEY}
+      MNEMONIC_LOGGING_LEVEL: debug
+    depends_on:
+      dev_neo4j:
+        condition: service_healthy
+      dev_postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/mnemonic-api", "--health"]
       interval: 2s
       timeout: 5s
       retries: 5

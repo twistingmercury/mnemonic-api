@@ -56,12 +56,6 @@ e2e_tests(){
         return 1
     fi
 
-    printf "Waiting for infrastructure to be healthy...\n"
-    if ! docker compose -f "${E2E_COMPOSE_FILE}" run --rm migrate; then
-        printf "ERROR: E2E migrations failed\n" >&2
-        return 1
-    fi
-
     docker compose -f "${E2E_COMPOSE_FILE}" up \
         --build \
         --abort-on-container-exit \

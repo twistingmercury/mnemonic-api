@@ -2,17 +2,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMPOSE_FILE="${PROJECT_ROOT}/docker-compose-dev.yaml"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yaml"
 TARGET="${TARGET:-ALL}"
 
 if [ ! -f "${COMPOSE_FILE}" ]; then
     printf 'ERROR: docker-compose-dev.yaml not found at %s\n' "${COMPOSE_FILE}" >&2
     exit 1
 fi
-API_URL="http://localhost:8080"
-MCP_URL="http://localhost:8081"
-METRICS_URL="http://localhost:9090"
+API_URL="http://localhost:3000"
+MCP_URL="http://localhost:8091"
+METRICS_URL="http://localhost:9091"
 MAX_RETRIES=30
 TARGET="${TARGET:-ALL}"
 
@@ -51,21 +51,7 @@ cd "${SCRIPT_DIR}/e2e"
 export API_URL="${API_URL}" 
 export MCP_URL="${MCP_URL}" 
 export METRICS_URL="${METRICS_URL}"
-export TARGET="${TARGET}"
 
-case $TARGET in
-    1)
-        echo "Running API tests..."
-        go test -v ./api/...
-        ;;
-    2)
-        echo "Running MCP tests..."
-        go test -v ./mcp/...
-        ;;
-    *)
-        echo "Running all tests..."
-        go test -v ./...
-        ;;
-esac
+go test -v ./...
 
 echo ""
