@@ -33,34 +33,6 @@ services:
     networks:
       - mnemonic-network
 
-  mnemonic_mcp:
-    image:  ghcr.io/twistingmercury/mnemonic:latest
-    pull_policy: always
-
-    ports:
-      - "8082:8080"
-      - "8083:8081"
-      - "9091:9090"
-    environment:
-      MNEMONIC_DATABASE_POSTGRES_HOST: postgres
-      MNEMONIC_DATABASE_POSTGRES_PASSWORD: mnemonic_dev
-      MNEMONIC_DATABASE_POSTGRES_SSL_MODE: disable
-      MNEMONIC_DATABASE_NEO4J_URI:  bolt://neo4j:7687
-      MNEMONIC_DATABASE_NEO4J_PASSWORD: mnemonic_dev
-      MNEMONIC_OPENAI_API_KEY: sk-test-dummy
-      MNEMONIC_MCP_PORT: 8081
-      MNEMONIC_LOGGING_LEVEL: error
-    depends_on:
-      neo4j:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "/mnemonic", "--health"]
-      interval: 2s
-      timeout: 5s
-      retries: 5
-    networks:
-      - mnemonic-network
-
 # this is the testing target
   mnemonic_api:
     image: ghcr.io/twistingmercury/mnemonic-api:latest
@@ -81,7 +53,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/mnemonic", "--health"]
+      test: ["CMD", "/mnemonic-api", "--health"]
       interval: 2s
       timeout: 5s
       retries: 5

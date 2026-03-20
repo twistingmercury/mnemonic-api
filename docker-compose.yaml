@@ -36,7 +36,7 @@ services:
     networks:
       - dev_network
 
-  dev_api:
+  dev_mcp:
     image: ghcr.io/twistingmercury/mnemonic:latest-dev
     pull_policy: always
     restart: unless-stopped
@@ -67,7 +67,7 @@ services:
     networks:
       - dev_network
 
-  dev_rest:
+  dev_api:
     image: ghcr.io/twistingmercury/mnemonic-api:latest
     pull_policy: never
     restart: unless-stopped

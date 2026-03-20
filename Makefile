@@ -1,23 +1,53 @@
-.PHONY: mnemonic help run stop
+.PHONY: local build analyze tests-db tests-db-agent tests-db-pattern tests-db-graph tests-unit tests-bench docs-swagger start stop help
+
+GIT_COMMIT := $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
+GIT_TAG    := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+BUILD_DATE := $(shell date -u +%Y-%m-%d)
 
 default: help
 
-mnemonic: ## Run the build.sh script to build the mnemonic server
-	@printf "Starting full build of mnemonicn...\n"
-	@LOCAL=1 ./src/mnemonic/build/build.sh
+build: ## Build Docker image locally using the full CI build script
+	cd src && LOCAL=1 ./build/build.sh
 
-help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "\nAvailable targets:\n"} /^[a-zA-Z0-9_-]+:.*##/ { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+analyze: ## Run linters, formatters, security scanners, etc
+	cd src && goimports -w .
+	cd src && golangci-lint run
+	cd src && govulncheck ./cmd/... ./internal/...
+	cd src && gosec -quiet -exclude-dir=tests ./...
 
-start: ## Runs mnemonic using the latest build in the ghcr
+tests-db: tests-db-agent tests-db-pattern tests-db-graph ## Run all database integration tests
+
+tests-db-agent: ## Run agent repository integration tests
+	cd src && ./internal/repository/tests/run-agent-integration-tests.sh
+
+tests-db-pattern: ## Run pattern repository integration tests
+	cd src && ./internal/repository/tests/run-pattern-integration-tests.sh
+
+tests-db-graph: ## Run graph repository integration tests
+	cd src && ./internal/repository/tests/run-graph-integration-tests.sh
+
+tests-unit: ## Run unit tests with coverage
+	cd src && go test ./internal/... -coverprofile=coverage.out
+	cd src && go tool cover -html=coverage.out
+
+tests-bench: ## Run benchmark tests
+	cd src && go test ./internal/... -bench=. -benchmem -run=^$$
+
+docs-swagger: ## Generate Swagger 2.0 docs
+	cd src && go install github.com/swaggo/swag/cmd/swag@latest
+	cd src && swag init -g cmd/main/main.go -o docs/swagger --parseInternal
+
+start: ## Start mnemonic using the latest image via Docker Compose
 	@printf "Starting mnemonic..."
 	@docker compose -f ./docker-compose.yaml up -d > /dev/null 2>&1 || true
 	@printf "done\n"
 
-stop: ## Tears down the mnemonic infra that was started with 'make start' command
+stop: ## Tear down mnemonic infrastructure started with 'make start'
 	@printf "Stopping mnemonic.."
-	@docker compose down -v --remove-orphans ≈
+	@docker compose down -v --remove-orphans > /dev/null 2>&1 || true
 	@docker rmi migrate/migrate:latest -f > /dev/null 2>&1 || true
 	@docker system prune -v > /dev/null 2>&1 || true
 	@printf "done\n"
 
+help: ## Show this help
+	@awk 'BEGIN {FS = ":.*##"; printf "\nAvailable targets:\n"} /^[a-zA-Z0-9_-]+:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)

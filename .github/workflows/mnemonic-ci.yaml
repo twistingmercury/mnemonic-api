@@ -6,24 +6,24 @@ on:
       - main
       - develop
     paths:
-      - "src/mnemonic/internal/**"
-      - "src/mnemonic/cmd/**"
-      - "src/mnemonic/go.mod"
-      - "src/mnemonic/go.sum"
-      - "src/mnemonic/build/**"
-      - "src/mnemonic/tests/**"
+      - "src/internal/**"
+      - "src/cmd/**"
+      - "src/go.mod"
+      - "src/go.sum"
+      - "src/build/**"
+      - "src/tests/**"
       - ".github/workflows/mnemonic-ci.yaml"
   pull_request:
     branches:
       - main
       - develop
     paths:
-      - "src/mnemonic/internal/**"
-      - "src/mnemonic/cmd/**"
-      - "src/mnemonic/go.mod"
-      - "src/mnemonic/go.sum"
-      - "src/mnemonic/build/**"
-      - "src/mnemonic/tests/**"
+      - "src/internal/**"
+      - "src/cmd/**"
+      - "src/go.mod"
+      - "src/go.sum"
+      - "src/build/**"
+      - "src/tests/**"
       - ".github/workflows/mnemonic-ci.yaml"
   workflow_dispatch:
 
@@ -36,7 +36,7 @@ jobs:
       packages: write
     defaults:
       run:
-        working-directory: src/mnemonic
+        working-directory: src
 
     steps:
       - name: Checkout code
@@ -58,11 +58,11 @@ jobs:
         run: |
           VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev')
           if [[ "${{ github.ref_name }}" == "main" ]]; then
-            docker push ghcr.io/twistingmercury/mnemonic:latest
-            docker push ghcr.io/twistingmercury/mnemonic:${VERSION}
+            docker push ghcr.io/twistingmercury/mnemonic-api:latest
+            docker push ghcr.io/twistingmercury/mnemonic-api:${VERSION}
           else
-            docker tag ghcr.io/twistingmercury/mnemonic:latest ghcr.io/twistingmercury/mnemonic:latest-dev
-            docker tag ghcr.io/twistingmercury/mnemonic:${VERSION} ghcr.io/twistingmercury/mnemonic:${VERSION}-dev
-            docker push ghcr.io/twistingmercury/mnemonic:latest-dev
-            docker push ghcr.io/twistingmercury/mnemonic:${VERSION}-dev
+            docker tag ghcr.io/twistingmercury/mnemonic-api:latest ghcr.io/twistingmercury/mnemonic-api:latest-dev
+            docker tag ghcr.io/twistingmercury/mnemonic-api:${VERSION} ghcr.io/twistingmercury/mnemonic-api:${VERSION}-dev
+            docker push ghcr.io/twistingmercury/mnemonic-api:latest-dev
+            docker push ghcr.io/twistingmercury/mnemonic-api:${VERSION}-dev
           fi
