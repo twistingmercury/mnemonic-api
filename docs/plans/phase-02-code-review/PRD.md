@@ -100,7 +100,7 @@ The Phase 2 code review (`docs/code-reviews/phase-02-queue-publishing.md`) ident
   - Verify: `make build`
   - Done: `make build` exits 0; `grep -r "chunkRepo == nil" src/internal/service/pattern/service.go` returns no matches.
 
-- [ ] **Cycle 5 - Compose alignment and operational doc**: Align the test RabbitMQ credentials with the dev compose file (L5).
+- [x] **Cycle 5 - Compose alignment and operational doc**: Align the test RabbitMQ credentials with the dev compose file (L5).
   - Agent: `devops engineer`
   - Files: `src/tests/docker-compose.yaml`
   - Steps:

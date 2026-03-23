@@ -71,3 +71,15 @@ Verification:
   - grep chunkRepo == nil src/internal/service/pattern/service.go -> no matches.
   - make build -> passed (linters, unit tests, Docker build, E2E tests).
 Commit: 6b19dca  Tag: phase-02-cr-cycle-4
+
+## Cycle 5 - Compose alignment and operational doc
+Date: 2026-03-23
+Summary:
+  - Changed RABBITMQ_DEFAULT_PASS from mnemonic to mnemonic_dev in the
+    rabbitmq service environment block (L5).
+  - Changed MNEMONIC_QUEUE_RABBITMQ_PASSWORD from mnemonic to mnemonic_dev
+    in the mnemonic_api service environment block.
+  - Both password values now match docker-compose.yaml.
+Verification:
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+Commit: 4403e30  Tag: phase-02-cr-cycle-5
