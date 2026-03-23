@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
-	queue "github.com/twistingmercury/mnemonic-api/internal/queue"
+	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/repository"
 	agentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/agent"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"

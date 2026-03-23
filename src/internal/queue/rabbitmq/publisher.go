@@ -1,4 +1,9 @@
 // Package rabbitmq provides a RabbitMQ-backed implementation of queue.Publisher.
+//
+// Operational note: if Publish returns an error the enrichmentjob row remains in PostgreSQL
+// with status "pending". Operators should alert on:
+//
+//	SELECT count(*) FROM enrichment_jobs WHERE status = 'pending' AND created_at < NOW() - INTERVAL '10 minutes'.
 package rabbitmq
 
 import (
@@ -16,23 +21,25 @@ import (
 )
 
 // PublisherConfig holds the connection parameters for the RabbitMQ publisher.
+// VHost must be URL-safe; names containing special characters must be percent-encoded by the caller before assignment.
 type PublisherConfig struct {
 	Host           string
 	Port           int
 	User           string
-	Password       string // #nosec G117
+	Password       string // #nosec G101 — value supplied via config, not hardcoded in source
 	VHost          string
 	Queue          string
 	ReconnectDelay time.Duration
 }
 
 // amqpURL builds the AMQP connection URL from the config fields.
+// The returned string embeds a plaintext password and must never be logged or included in error messages.
 func (c PublisherConfig) amqpURL() string {
 	return fmt.Sprintf("amqp://%s:%s@%s:%d/%s", c.User, c.Password, c.Host, c.Port, c.VHost)
 }
 
-// RabbitMQPublisher implements queue.Publisher backed by a RabbitMQ broker.
-type RabbitMQPublisher struct {
+// Publisher implements queue.Publisher backed by a RabbitMQ broker.
+type Publisher struct {
 	cfg  PublisherConfig
 	conn *amqp.Connection
 	ch   *amqp.Channel
@@ -60,7 +67,7 @@ func NewPublisher(cfg PublisherConfig) (queue.Publisher, error) {
 		return nil, fmt.Errorf("rabbitmq: declare queue %q: %w", cfg.Queue, err)
 	}
 
-	return &RabbitMQPublisher{cfg: cfg, conn: conn, ch: ch}, nil
+	return &Publisher{cfg: cfg, conn: conn, ch: ch}, nil
 }
 
 // jobPayload is the JSON body published for each enrichment job.
@@ -71,7 +78,7 @@ type jobPayload struct {
 // Publish serialises jobID into a JSON message and delivers it to the
 // configured queue with persistent delivery mode. On publish failure it
 // attempts a single reconnect and retry before returning the error.
-func (p *RabbitMQPublisher) Publish(ctx context.Context, jobID uuid.UUID) error {
+func (p *Publisher) Publish(ctx context.Context, jobID uuid.UUID) error {
 	body, err := json.Marshal(jobPayload{JobID: jobID.String()})
 	if err != nil {
 		return fmt.Errorf("rabbitmq: marshal payload: %w", err)
@@ -100,7 +107,7 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, jobID uuid.UUID) error 
 
 // reconnect closes the stale channel and connection, then re-dials the broker
 // and re-declares the queue. It replaces p.conn and p.ch on success.
-func (p *RabbitMQPublisher) reconnect(ctx context.Context) error {
+func (p *Publisher) reconnect(ctx context.Context) error {
 	// Ignore close errors on stale resources.
 	if p.ch != nil {
 		_ = p.ch.Close()
@@ -139,7 +146,7 @@ func (p *RabbitMQPublisher) reconnect(ctx context.Context) error {
 
 // Close releases the channel and connection. Both close errors are joined and
 // returned together so callers observe the full picture.
-func (p *RabbitMQPublisher) Close() error {
+func (p *Publisher) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 

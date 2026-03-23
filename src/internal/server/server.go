@@ -21,7 +21,7 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/health"
 	"github.com/twistingmercury/mnemonic-api/internal/mcpserver"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
-	queue "github.com/twistingmercury/mnemonic-api/internal/queue"
+	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
 	agentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/agent"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
