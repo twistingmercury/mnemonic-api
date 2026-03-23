@@ -17,11 +17,12 @@ import (
 
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/database"
-	"github.com/twistingmercury/mnemonic-api/internal/enricher"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/operations"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
 	"github.com/twistingmercury/mnemonic-api/internal/mcpserver"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
+	queue "github.com/twistingmercury/mnemonic-api/internal/queue"
+	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
 	agentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/agent"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	enrichmentjobrepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
@@ -30,7 +31,6 @@ import (
 	skillrepo "github.com/twistingmercury/mnemonic-api/internal/repository/skill"
 	skillfilerepo "github.com/twistingmercury/mnemonic-api/internal/repository/skillfile"
 	agentsvc "github.com/twistingmercury/mnemonic-api/internal/service/agent"
-	enrichmentsvc "github.com/twistingmercury/mnemonic-api/internal/service/enrichment"
 	openaisvc "github.com/twistingmercury/mnemonic-api/internal/service/openai"
 	patternsvc "github.com/twistingmercury/mnemonic-api/internal/service/pattern"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
@@ -42,8 +42,8 @@ import (
 
 // ListenAndServe starts the mnemonic server. It initializes telemetry,
 // establishes database connections, wires all dependencies, and runs the
-// Admin API, MCP server, and enrichment worker concurrently. It blocks until
-// a shutdown signal is received or a component returns a fatal error.
+// Admin API and MCP server concurrently. It blocks until a shutdown signal
+// is received or a component returns a fatal error.
 func ListenAndServe(cfg *config.MnemonicConfig) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -85,10 +85,15 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	}
 
 	// Wire all dependencies.
-	svc, toolDeps, enrichWorker, err := wireDependencies(pgPool, neo4jDriver, cfg, logger)
+	svc, toolDeps, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("failed to wire dependencies: %w", err)
 	}
+	defer func() {
+		if closeErr := pub.Close(); closeErr != nil {
+			logger.Error().Err(closeErr).Msg("publisher close error")
+		}
+	}()
 
 	// Create request metrics middleware.
 	requestMetrics, err := middleware.NewRequestMetrics(tel.Meter("mnemonic/http"))
@@ -118,13 +123,6 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 
 	g.Go(func() error {
 		return runMCPServer(gCtx, mcpHTTPServer, logger)
-	})
-
-	g.Go(func() error {
-		logger.Info().
-			Int("worker_count", cfg.Enrichment.WorkerCount).
-			Msg("starting enrichment worker")
-		return enrichWorker.Run(gCtx)
 	})
 
 	// Wait for shutdown signal or component failure.
@@ -176,14 +174,14 @@ func closeDatabases(pgPool *pgxpool.Pool, neo4jDriver neo4j.DriverWithContext, l
 	}
 }
 
-// wireDependencies creates all repositories, services, and the enrichment
-// worker. Returns the route Services, MCP ToolDependencies, and enrichment Worker.
+// wireDependencies creates all repositories, services, and the RabbitMQ
+// publisher. Returns the route Services, MCP ToolDependencies, and Publisher.
 func wireDependencies(
 	pgPool *pgxpool.Pool,
 	neo4jDriver neo4j.DriverWithContext,
 	cfg *config.MnemonicConfig,
 	logger zerolog.Logger,
-) (Services, mcpserver.ToolDependencies, *enricher.Worker, error) {
+) (Services, mcpserver.ToolDependencies, queue.Publisher, error) {
 	// Repositories.
 	agentRepo := agentrepo.NewRepository(pgPool)
 	patternRepo := patternrepo.NewRepository(pgPool)
@@ -195,22 +193,27 @@ func wireDependencies(
 
 	// External services.
 	embeddingSvc := openaisvc.NewEmbeddingService(cfg.OpenAI)
-	extractionSvc := openaisvc.NewExtractionService(cfg.OpenAI)
+
+	// Publisher.
+	pub, err := rabbitmq.NewPublisher(rabbitmq.PublisherConfig{
+		Host:           cfg.Queue.RabbitMQ.Host,
+		Port:           cfg.Queue.RabbitMQ.Port,
+		User:           cfg.Queue.RabbitMQ.User,
+		Password:       cfg.Queue.RabbitMQ.Password,
+		VHost:          cfg.Queue.RabbitMQ.VHost,
+		Queue:          cfg.Queue.RabbitMQ.Queue,
+		ReconnectDelay: cfg.Queue.RabbitMQ.ReconnectDelay,
+	})
+	if err != nil {
+		return Services{}, nil, nil, fmt.Errorf("wire publisher: %w", err)
+	}
 
 	// Domain services.
 	agentSvc := agentsvc.New(agentRepo, graphRepo, logger)
 	skillSvc := skillsvc.New(skillRepo, logger)
 	skillFileSvc := skillfilesvc.New(skillFileRepo, skillRepo, logger)
 	searchSvc := searchsvc.New(embeddingSvc, patternRepo, agentRepo, chunkRepo, logger)
-	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, agentRepo, pgPool, chunkRepo, logger)
-	enrichmentSvc, err := enrichmentsvc.New(
-		enrichmentJobRepo, patternRepo, agentRepo, graphRepo,
-		embeddingSvc, extractionSvc,
-		cfg.Enrichment, chunkRepo, logger,
-	)
-	if err != nil {
-		return Services{}, nil, nil, fmt.Errorf("wire enrichment service: %w", err)
-	}
+	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, agentRepo, pgPool, chunkRepo, pub, logger)
 
 	// MCP facade.
 	toolDeps := mcpserver.NewToolDependencies(searchSvc, patternSvc)
@@ -224,10 +227,7 @@ func wireDependencies(
 		SkillFile: skillFileSvc,
 	}
 
-	// Enrichment worker.
-	enrichWorker := enricher.New(enrichmentSvc, cfg.Enrichment, logger)
-
-	return svc, toolDeps, enrichWorker, nil
+	return svc, toolDeps, pub, nil
 }
 
 // runHTTPServer starts the admin API HTTP server and gracefully shuts it down
