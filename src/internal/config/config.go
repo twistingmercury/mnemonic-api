@@ -22,6 +22,7 @@ type MnemonicConfig struct {
 	Logging       LoggingConfig       `mapstructure:"logging"`
 	Observability ObservabilityConfig `mapstructure:"observability"`
 	Vocabulary    VocabularyConfig    `mapstructure:"vocabulary"`
+	Queue         QueueConfig         `mapstructure:"queue"`
 }
 
 // VocabularyConfig holds the allowed values for pattern language and domain fields.
@@ -109,6 +110,23 @@ type RateLimitConfig struct {
 type PerUserRateLimit struct {
 	RequestsPerMinute int `mapstructure:"requests_per_minute"`
 	BurstSize         int `mapstructure:"burst_size"`
+}
+
+// QueueConfig contains message queue settings.
+type QueueConfig struct {
+	Provider string         `mapstructure:"provider"`
+	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
+}
+
+// RabbitMQConfig contains RabbitMQ connection settings.
+type RabbitMQConfig struct {
+	Host           string        `mapstructure:"host"`
+	Port           int           `mapstructure:"port"`
+	User           string        `mapstructure:"user"`
+	Password       string        `mapstructure:"password"` // #nosec G117 -- credentials loaded from config/env, not serialized
+	VHost          string        `mapstructure:"vhost"`
+	Queue          string        `mapstructure:"queue"`
+	ReconnectDelay time.Duration `mapstructure:"reconnect_delay"`
 }
 
 // EnrichmentConfig contains enrichment worker settings.
@@ -339,6 +357,16 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("observability.tracing.endpoint", "")
 	v.SetDefault("observability.tracing.sample_rate", DefaultTracingSampleRate)
 	v.SetDefault("observability.tracing.otlp_insecure", DefaultTracingOTLPInsecure)
+
+	// Queue defaults
+	v.SetDefault("queue.provider", DefaultQueueProvider)
+	v.SetDefault("queue.rabbitmq.host", DefaultRabbitMQHost)
+	v.SetDefault("queue.rabbitmq.port", DefaultRabbitMQPort)
+	v.SetDefault("queue.rabbitmq.user", DefaultRabbitMQUser)
+	v.SetDefault("queue.rabbitmq.password", "")
+	v.SetDefault("queue.rabbitmq.vhost", DefaultRabbitMQVHost)
+	v.SetDefault("queue.rabbitmq.queue", DefaultRabbitMQQueue)
+	v.SetDefault("queue.rabbitmq.reconnect_delay", DefaultRabbitMQReconnectDelay)
 }
 
 // findConfigFile determines which config file to use based on the discovery order.
