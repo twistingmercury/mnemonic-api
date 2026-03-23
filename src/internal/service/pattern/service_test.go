@@ -515,7 +515,8 @@ func newTestService(
 	tb *mockTxBeginner,
 ) patternsvc.Service {
 	logger := zerolog.Nop()
-	// chunkRepo is nil: chunk creation is skipped during the transitional period.
+	// chunkRepo is nil intentionally: exercises the legacy pattern-level enrichment job path.
+	// Tests covering the production chunk-aware path use newTestServiceWithChunkRepo.
 	return patternsvc.New(pr, er, gr, ar, tb, nil, &mockPublisher{}, logger)
 }
 
@@ -1867,5 +1868,95 @@ func TestListChunks(t *testing.T) {
 
 		pr.AssertExpectations(t)
 		cr.AssertExpectations(t)
+	})
+}
+
+// ---------- PublishJob error ----------
+
+// newTestServiceWithFailingPublisher wires a service with a nil chunkRepo
+// (legacy enrichment-job path) and a publisher that always fails. The nil must
+// be untyped so the chunkrepo.Repository interface field is truly nil.
+func newTestServiceWithFailingPublisher(
+	pr *mockPatternRepo,
+	er *mockEnrichmentRepo,
+	gr *mockGraphRepo,
+	ar *mockAgentRepo,
+	tb *mockTxBeginner,
+	pub *mockPublisher,
+) patternsvc.Service {
+	logger := zerolog.Nop()
+	return patternsvc.New(pr, er, gr, ar, tb, nil, pub, logger)
+}
+
+func TestPublishJobError(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Create propagates no error when publish fails", func(t *testing.T) {
+		t.Parallel()
+
+		pr := new(mockPatternRepo)
+		er := new(mockEnrichmentRepo)
+		gr := new(mockGraphRepo)
+		ar := new(mockAgentRepo)
+		tb := new(mockTxBeginner)
+		pub := &mockPublisher{publishErr: errors.New("queue unavailable")}
+		svc := newTestServiceWithFailingPublisher(pr, er, gr, ar, tb, pub)
+
+		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
+			ID:   testAgentID,
+			Name: "code-reviewer",
+		}, nil)
+		pr.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+			p := args.Get(1).(*patternrepo.Pattern)
+			p.ID = testPatternID
+			p.EnrichmentStatus = "pending"
+		}).Return(nil)
+		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.Anything).Return(nil)
+		er.On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
+			return j.PatternID != nil && *j.PatternID == testPatternID
+		})).Return(nil)
+		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.Anything).Return(nil)
+
+		result, err := svc.Create(context.Background(), testCreateInput())
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Empty(t, pub.publishedIDs)
+
+		pr.AssertExpectations(t)
+		er.AssertExpectations(t)
+	})
+
+	t.Run("Update propagates no error when publish fails", func(t *testing.T) {
+		t.Parallel()
+
+		pr := new(mockPatternRepo)
+		er := new(mockEnrichmentRepo)
+		gr := new(mockGraphRepo)
+		ar := new(mockAgentRepo)
+		tb := new(mockTxBeginner)
+		pub := &mockPublisher{publishErr: errors.New("queue unavailable")}
+		svc := newTestServiceWithFailingPublisher(pr, er, gr, ar, tb, pub)
+
+		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
+			ID:   testAgentID,
+			Name: "code-reviewer",
+		}, nil)
+		pr.On("Update", mock.Anything, mock.Anything).Return(nil)
+		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.Anything).Return(nil)
+		er.On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
+			return j.PatternID != nil && *j.PatternID == testPatternID
+		})).Return(nil)
+		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.Anything).Return(nil)
+
+		result, err := svc.Update(context.Background(), testPatternID, testUpdateInput())
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Empty(t, pub.publishedIDs)
+
+		pr.AssertExpectations(t)
+		er.AssertExpectations(t)
 	})
 }
