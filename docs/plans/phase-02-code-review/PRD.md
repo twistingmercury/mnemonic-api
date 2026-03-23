@@ -43,12 +43,13 @@ The Phase 2 code review (`docs/code-reviews/phase-02-queue-publishing.md`) ident
 - `go test -race ./...` required for Cycle 1 (the race fix cycle).
 - `make analyze` must pass after any `.go` file is modified.
 - Signed commits: `git commit -S`.
+- Signed tags: each cycle creates two annotated tags — `phase-02-cr-cycle-N` (after the implementation commit) and `phase-02-cr-cycle-N-records` (after the PRD/progress commit). Use `git tag -s`; if signing fails, stop and report.
 - Rename `RabbitMQPublisher` → `Publisher` is safe: `NewPublisher` returns the `queue.Publisher` interface, so the concrete type is never visible outside the `rabbitmq` package.
 - Removing nil-guard branches in Cycle 4 requires updating `newTestService` in the same cycle to pass a real `mockChunkRepo` so no test regresses.
 
 ## Implementation Plan
 
-- [ ] **Cycle 1 - Publisher mutex and ctx-aware reconnect**: Add a `sync.Mutex` to `RabbitMQPublisher` to eliminate the data race (H2), and replace `time.Sleep` in `reconnect` with a context-aware select so the HTTP goroutine can be cancelled during a reconnect delay (M1).
+- [x] **Cycle 1 - Publisher mutex and ctx-aware reconnect**: Add a `sync.Mutex` to `RabbitMQPublisher` to eliminate the data race (H2), and replace `time.Sleep` in `reconnect` with a context-aware select so the HTTP goroutine can be cancelled during a reconnect delay (M1).
   - Agent: `go software engineer`
   - Files: `src/internal/queue/rabbitmq/publisher.go`
   - Steps:

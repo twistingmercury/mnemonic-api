@@ -1,0 +1,14 @@
+
+## Cycle 1 - Publisher mutex and ctx-aware reconnect
+Date: 2026-03-23
+Summary:
+  - Added sync.Mutex field to RabbitMQPublisher struct.
+  - Wrapped Publish and Close with p.mu.Lock()/defer p.mu.Unlock() to
+    eliminate the data race (H2) on shared p.ch and p.conn.
+  - Changed reconnect() signature to reconnect(ctx context.Context) error.
+  - Replaced time.Sleep(p.cfg.ReconnectDelay) with a context-aware select,
+    allowing HTTP goroutine cancellation during reconnect delay (M1).
+Verification:
+  - cd src && go test -race ./... → passed, no data races.
+  - make build → passed (linters, unit tests, Docker build, E2E tests).
+Commit: e13dc7a  Tag: phase-02-cr-cycle-1
