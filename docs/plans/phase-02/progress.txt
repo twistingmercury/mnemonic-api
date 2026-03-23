@@ -16,3 +16,13 @@ reconnect, and Close with joined errors.
 Verification: go build ./internal/queue/... and go vet ./internal/queue/... exit 0;
 make analyze (goimports, golangci-lint, govulncheck, gosec) all pass.
 Notes: gopls shows workspace warnings (no go.work for src/) but these do not affect compilation.
+
+Cycle 3 - Pattern service publishing
+Date: 2026-03-23
+Summary: Added queue.Publisher field and parameter to patternService/New(); added publishJob
+best-effort helper; called publishJob after each successful enrichmentRepo.Create in both
+Create and Update (chunk path and legacy path); added mockPublisher to service_test.go and
+updated all three New() helper call sites.
+Verification: go build ./internal/service/pattern/... and go test ./internal/service/pattern/...
+both exit 0. make analyze fails on server.go call site — expected; Cycle 4 fixes it.
+Notes: server.go call site is intentionally broken until Cycle 4 updates it.

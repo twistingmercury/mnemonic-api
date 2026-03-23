@@ -76,7 +76,7 @@ Replace `mnemonic-api`'s internal polling enrichment worker with RabbitMQ queue 
   - Verify: `cd src && go build ./internal/queue/...`
   - Done: `go build` exits 0 with no compilation errors.
 
-- [ ] **Cycle 3 - Pattern service publishing**: Inject `queue.Publisher` into `patternService` and publish each enrichment job ID after the DB row is created.
+- [x] **Cycle 3 - Pattern service publishing**: Inject `queue.Publisher` into `patternService` and publish each enrichment job ID after the DB row is created.
   - Agent: `go software engineer`
   - Files: `src/internal/service/pattern/service.go`, `src/internal/service/pattern/service_test.go`, `src/internal/service/pattern/split_chunks_test.go`
   - Steps:
