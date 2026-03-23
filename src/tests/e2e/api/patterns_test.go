@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/twistingmercury/mnemonic-api/tests/e2e/helpers"
@@ -2332,26 +2331,14 @@ func TestPatternEnrichment_StatusTransitionsToPendingOrFailed(t *testing.T) {
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	// Poll until enrichment completes (pending → enriched or failed)
-	deadline := time.Now().Add(10 * time.Second)
-	var finalStatus string
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(patternPath(created.ID))
-		if err != nil {
-			t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
-		}
-		p := helpers.ParseJSON[helpers.Pattern](t, resp)
-		finalStatus = p.EnrichmentStatus
-		if p.EnrichmentStatus != "pending" {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
+	resp, err := client.Get(patternPath(created.ID))
+	if err != nil {
+		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
+	p := helpers.ParseJSON[helpers.Pattern](t, resp)
 
-	// With a dummy OpenAI key, expect "failed" (not enriched)
-	validStatuses := map[string]bool{"pending": true, "enriched": true, "failed": true}
-	if !validStatuses[finalStatus] {
-		t.Fatalf("expected enrichment_status to be pending/enriched/failed, got %q", finalStatus)
+	if p.EnrichmentStatus != "pending" {
+		t.Fatalf("expected enrichment_status 'pending' (no enricher running in E2E), got %q", p.EnrichmentStatus)
 	}
 }
 
@@ -2373,24 +2360,17 @@ func TestPatternEnrichment_EnrichedAtSetWhenEnriched(t *testing.T) {
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	// Poll until enrichment is no longer pending
-	deadline := time.Now().Add(10 * time.Second)
-	var finalPattern helpers.Pattern
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(patternPath(created.ID))
-		if err != nil {
-			t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
-		}
-		finalPattern = helpers.ParseJSON[helpers.Pattern](t, resp)
-		if finalPattern.EnrichmentStatus != "pending" {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
+	resp, err := client.Get(patternPath(created.ID))
+	if err != nil {
+		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
+	p := helpers.ParseJSON[helpers.Pattern](t, resp)
 
-	// If enriched, enriched_at must be set; if failed, it may be empty
-	if finalPattern.EnrichmentStatus == "enriched" && finalPattern.EnrichedAt == "" {
-		t.Fatal("expected enriched_at to be set when enrichment_status is 'enriched'")
+	if p.EnrichmentStatus != "pending" {
+		t.Fatalf("expected enrichment_status 'pending' (no enricher running in E2E), got %q", p.EnrichmentStatus)
+	}
+	if p.EnrichedAt != "" {
+		t.Fatalf("expected enriched_at to be empty when status is pending, got %q", p.EnrichedAt)
 	}
 }
 
@@ -2412,24 +2392,14 @@ func TestPatternEnrichment_ErrorSetWhenFailed(t *testing.T) {
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	// Poll until enrichment is no longer pending
-	deadline := time.Now().Add(10 * time.Second)
-	var finalPattern helpers.Pattern
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(patternPath(created.ID))
-		if err != nil {
-			t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
-		}
-		finalPattern = helpers.ParseJSON[helpers.Pattern](t, resp)
-		if finalPattern.EnrichmentStatus != "pending" {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
+	resp, err := client.Get(patternPath(created.ID))
+	if err != nil {
+		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
+	p := helpers.ParseJSON[helpers.Pattern](t, resp)
 
-	// With dummy OpenAI key, enrichment should fail and enrichment_error should be set
-	if finalPattern.EnrichmentStatus == "failed" && finalPattern.EnrichmentError == "" {
-		t.Fatal("expected enrichment_error to be set when enrichment_status is 'failed'")
+	if p.EnrichmentStatus != "pending" {
+		t.Fatalf("expected enrichment_status 'pending' (no enricher running in E2E), got %q", p.EnrichmentStatus)
 	}
 }
 
@@ -2450,20 +2420,6 @@ func TestPatternEnrichment_ContentUpdateTriggersReenrichment(t *testing.T) {
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	// Wait for initial enrichment to settle (pending → failed with dummy key)
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(patternPath(created.ID))
-		if err != nil {
-			t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
-		}
-		p := helpers.ParseJSON[helpers.Pattern](t, resp)
-		if p.EnrichmentStatus != "pending" {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
 	// Update content — should reset enrichment_status to pending
 	updateBody := helpers.PatternUpdate{
 		Name:       createBody.Name,
@@ -2480,6 +2436,15 @@ func TestPatternEnrichment_ContentUpdateTriggersReenrichment(t *testing.T) {
 
 	helpers.AssertStatusCode(t, updateResp, http.StatusNoContent)
 	helpers.ReadBody(t, updateResp)
+
+	getResp, err := client.Get(patternPath(created.ID))
+	if err != nil {
+		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
+	}
+	updated := helpers.ParseJSON[helpers.Pattern](t, getResp)
+	if updated.EnrichmentStatus != "pending" {
+		t.Fatalf("expected enrichment_status 'pending' after update, got %q", updated.EnrichmentStatus)
+	}
 }
 
 // -----------------------------------------------------------------------------
