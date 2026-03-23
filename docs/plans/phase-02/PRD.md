@@ -122,7 +122,7 @@ Replace `mnemonic-api`'s internal polling enrichment worker with RabbitMQ queue 
   - Verify: `cd src/tests/e2e && go build ./...`
   - Done: `go build` exits 0; no test file imports or calls removed enrichment packages; updated tests no longer contain polling loops for enrichment status.
 
-- [ ] **Cycle 6 - Docker Compose and final validation**: Add RabbitMQ to both compose files, wire env vars, and validate with `make build`.
+- [x] **Cycle 6 - Docker Compose and final validation**: Add RabbitMQ to both compose files, wire env vars, and validate with `make build`.
   - Agent: `devops engineer`
   - Files: `docker-compose.yaml`, `src/tests/docker-compose.yaml`
   - Steps:

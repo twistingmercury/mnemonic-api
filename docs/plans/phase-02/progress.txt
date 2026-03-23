@@ -48,3 +48,21 @@ after PUT; removed unused "time" import.
 Verification: cd src/tests/e2e && go build ./... exits 0; no polling loops remain; no
 enrichment packages imported or called.
 Notes: None.
+
+Cycle 6 - Docker Compose and final validation
+Date: 2026-03-23
+Summary: Added dev_rabbitmq service to docker-compose.yaml (image rabbitmq:3-management-alpine,
+ports 5672/15672, healthcheck via rabbitmq-diagnostics ping, restart unless-stopped, explicit
+credentials RABBITMQ_DEFAULT_USER/PASS); added rabbitmq to dev_api depends_on (service_healthy)
+and MNEMONIC_QUEUE_RABBITMQ_HOST/USER/PASSWORD env vars. Added rabbitmq service to
+src/tests/docker-compose.yaml with same image and healthcheck but no port exposure; added to
+mnemonic_api depends_on and env vars. Also upgraded github.com/modelcontextprotocol/go-sdk
+v1.3.1 to v1.4.1 to resolve GO-2026-4773 and GO-2026-4770 (vulnerabilities exposed when Docker
+layer cache was invalidated during the build).
+Verification: docker compose -f docker-compose.yaml config --quiet exits 0;
+docker compose -f src/tests/docker-compose.yaml config --quiet exits 0; make build exits 0
+(Docker image built, all unit tests passed inside Docker, E2E tests container exited with code 0).
+Notes: RabbitMQ guest user is restricted to localhost connections — explicit credentials are
+required for container-to-container connectivity. govulncheck failures in
+modelcontextprotocol/go-sdk were pre-existing but hidden by Docker layer caching; fixed by
+upgrading to v1.4.1.
