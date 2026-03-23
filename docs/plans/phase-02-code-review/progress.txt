@@ -12,3 +12,18 @@ Verification:
   - cd src && go test -race ./... → passed, no data races.
   - make build → passed (linters, unit tests, Docker build, E2E tests).
 Commit: e13dc7a  Tag: phase-02-cr-cycle-1
+
+## Cycle 2 - Publisher cleanup
+Date: 2026-03-23
+Summary:
+  - Renamed concrete type RabbitMQPublisher -> Publisher (struct, receivers, literal).
+  - Fixed wrong nosec annotation: G117 -> G101 with explanatory comment (M3).
+  - Added amqpURL godoc warning about plaintext password in returned string (M4).
+  - Added PublisherConfig godoc note requiring VHost to be URL-safe (L6).
+  - Added package-level operational note: alert on pending enrichment_jobs >10min (M5).
+  - Removed redundant queue import alias from service.go and server.go (L1).
+Verification:
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+  - grep RabbitMQPublisher src/ -> no matches.
+  - grep 'queue "github.com' service.go server.go -> no matches.
+Commit: 8482d5b  Tag: phase-02-cr-cycle-2

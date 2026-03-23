@@ -62,7 +62,7 @@ The Phase 2 code review (`docs/code-reviews/phase-02-queue-publishing.md`) ident
   - Verify: `cd src && go test -race ./... && make build`
   - Done: Both commands exit 0; `go test -race` reports no data races; `make build` completes successfully including linters, unit tests, and E2E tests.
 
-- [ ] **Cycle 2 - Publisher cleanup**: Rename the concrete type (L2), fix the wrong gosec annotation (M3), add log-safety and operational doc comments (M4, M5, L6), and remove the redundant import aliases from service.go and server.go (L1).
+- [x] **Cycle 2 - Publisher cleanup**: Rename the concrete type (L2), fix the wrong gosec annotation (M3), add log-safety and operational doc comments (M4, M5, L6), and remove the redundant import aliases from service.go and server.go (L1).
   - Agent: `go software engineer`
   - Files: `src/internal/queue/rabbitmq/publisher.go`, `src/internal/service/pattern/service.go`, `src/internal/server/server.go`
   - Steps:
