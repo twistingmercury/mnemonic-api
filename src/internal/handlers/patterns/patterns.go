@@ -50,7 +50,6 @@ func New(patternSvc patternsvc.Service, searchSvc searchsvc.Service, vocab confi
 	}
 }
 
-
 // RegisterRoutes binds pattern endpoints to the given router group.
 // The group should be mounted at /v1/api.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
