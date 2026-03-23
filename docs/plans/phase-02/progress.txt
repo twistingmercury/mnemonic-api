@@ -26,3 +26,15 @@ updated all three New() helper call sites.
 Verification: go build ./internal/service/pattern/... and go test ./internal/service/pattern/...
 both exit 0. make analyze fails on server.go call site — expected; Cycle 4 fixes it.
 Notes: server.go call site is intentionally broken until Cycle 4 updates it.
+
+Cycle 4 - Server wiring, worker removal, and dead code deletion
+Date: 2026-03-23
+Summary: Wired rabbitmq.NewPublisher in wireDependencies using cfg.Queue.RabbitMQ fields;
+updated patternsvc.New call to pass publisher; changed wireDependencies return type from
+*enricher.Worker to queue.Publisher; removed enrichWorker.Run goroutine from ListenAndServe;
+added defer pub.Close(); removed enrichmentsvc and enricher imports; deleted
+internal/enricher/ (3 files), internal/service/enrichment/ (2 files),
+internal/service/openai/extraction.go, internal/service/openai/extraction_test.go;
+removed NewExtractionServiceForTest from export_test.go.
+Verification: go build ./... and go test ./... both exit 0; make analyze all pass.
+Notes: None.

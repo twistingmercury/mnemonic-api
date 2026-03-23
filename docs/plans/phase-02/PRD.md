@@ -90,7 +90,7 @@ Replace `mnemonic-api`'s internal polling enrichment worker with RabbitMQ queue 
   - Verify: `cd src && go build ./internal/service/pattern/... && go test ./internal/service/pattern/...`
   - Done: Both commands exit 0 — note this verify is intentionally scoped to the pattern package; server.go's call site is updated in Cycle 4.
 
-- [ ] **Cycle 4 - Server wiring, worker removal, and dead code deletion**: Wire the RabbitMQ publisher in `server.go`, remove the internal enrichment worker, and delete all packages that become dead code.
+- [x] **Cycle 4 - Server wiring, worker removal, and dead code deletion**: Wire the RabbitMQ publisher in `server.go`, remove the internal enrichment worker, and delete all packages that become dead code.
   - Agent: `go software engineer`
   - Files: `src/internal/server/server.go`, `src/internal/enricher/enrichment.go`, `src/internal/enricher/enrichment_test.go`, `src/internal/enricher/doc.go`, `src/internal/service/enrichment/service.go`, `src/internal/service/enrichment/service_test.go`, `src/internal/service/openai/extraction.go`, `src/internal/service/openai/extraction_test.go`, `src/internal/service/openai/export_test.go`
   - Steps:
