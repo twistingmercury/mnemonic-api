@@ -113,6 +113,12 @@ func (m *mockPatternRepo) Exists(ctx context.Context, id uuid.UUID) (bool, error
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockPatternRepo) WithTx(_ repository.DBTX) patternrepo.Repository {
+	// Return the same mock so that expectations set on m are honoured for
+	// the tx-scoped calls inside updateWithTransaction.
+	return m
+}
+
 // ---------- Mock: enrichmentrepo.Repository ----------
 
 type mockEnrichmentRepo struct {
@@ -469,6 +475,12 @@ func (m *mockChunkRepo) AnyFailedForPattern(ctx context.Context, patternID uuid.
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockChunkRepo) WithTx(_ repository.DBTX) chunkrepo.Repository {
+	// Return the same mock so that expectations set on m are honoured for
+	// the tx-scoped calls inside updateWithTransaction.
+	return m
+}
+
 // ---------- Mock: queue.Publisher ----------
 
 type mockPublisher struct {
@@ -529,6 +541,19 @@ func newTestServiceWithChunkRepoAndLogger(
 	logger zerolog.Logger,
 ) patternsvc.Service {
 	return patternsvc.New(pr, er, gr, ar, tb, cr, &mockPublisher{}, logger)
+}
+
+func newTestServiceWithPublisher(
+	pr *mockPatternRepo,
+	er *mockEnrichmentRepo,
+	gr *mockGraphRepo,
+	ar *mockAgentRepo,
+	tb *mockTxBeginner,
+	cr *mockChunkRepo,
+	pub *mockPublisher,
+) patternsvc.Service {
+	logger := zerolog.Nop()
+	return patternsvc.New(pr, er, gr, ar, tb, cr, pub, logger)
 }
 
 func testCreateInput() patternsvc.CreateInput {
@@ -1036,6 +1061,176 @@ func TestUpdate(t *testing.T) {
 		tx.AssertNotCalled(t, "Commit")
 		cr.AssertNotCalled(t, "CreateBatch")
 		er.AssertNotCalled(t, "Create")
+	})
+
+	t.Run("transaction commit path: all steps succeed, Commit called, Rollback is deferred no-op", func(t *testing.T) {
+		t.Parallel()
+
+		pr := new(mockPatternRepo)
+		er := new(mockEnrichmentRepo)
+		gr := new(mockGraphRepo)
+		ar := new(mockAgentRepo)
+		tb := new(mockTxBeginner)
+		cr := new(mockChunkRepo)
+		tx := new(mockPgxTx)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+
+		input := patternsvc.UpdateInput{
+			Name:    "go-error-handling-v2",
+			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
+		}
+
+		// Transaction lifecycle: full commit path.
+		tb.On("Begin", mock.Anything).Return(tx, nil)
+		tx.On("Commit", mock.Anything).Return(nil)
+		// Rollback is called by defer even after a successful Commit; pgx
+		// makes it a no-op.
+		tx.On("Rollback", mock.Anything).Return(nil)
+
+		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		pr.On("Update", mock.Anything, mock.Anything).Return(nil)
+		cr.On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
+		cr.On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
+			return len(chunks) == 2
+		})).Return(nil)
+
+		er.On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
+			return j.ChunkID != nil && j.PatternID == nil && j.Status == enrichmentrepo.StatusPending
+		})).Return(nil).Times(2)
+
+		result, err := svc.Update(context.Background(), testPatternID, input)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		tx.AssertCalled(t, "Commit", mock.Anything)
+		tx.AssertCalled(t, "Rollback", mock.Anything)
+		cr.AssertCalled(t, "CreateBatch", mock.Anything, mock.Anything)
+
+		tb.AssertExpectations(t)
+		tx.AssertExpectations(t)
+		pr.AssertExpectations(t)
+		cr.AssertExpectations(t)
+		er.AssertExpectations(t)
+	})
+
+	t.Run("transaction rollback path: CreateBatch fails, Commit NOT called", func(t *testing.T) {
+		t.Parallel()
+
+		pr := new(mockPatternRepo)
+		er := new(mockEnrichmentRepo)
+		gr := new(mockGraphRepo)
+		ar := new(mockAgentRepo)
+		tb := new(mockTxBeginner)
+		cr := new(mockChunkRepo)
+		tx := new(mockPgxTx)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+
+		input := patternsvc.UpdateInput{
+			Name:    "go-error-handling-v2",
+			Content: "[//]: pattern\n## Section One\nNew content.",
+		}
+
+		tb.On("Begin", mock.Anything).Return(tx, nil)
+		tx.On("Rollback", mock.Anything).Return(nil)
+
+		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		pr.On("Update", mock.Anything, mock.Anything).Return(nil)
+		cr.On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
+		cr.On("CreateBatch", mock.Anything, mock.Anything).
+			Return(errors.New("db error"))
+
+		result, err := svc.Update(context.Background(), testPatternID, input)
+
+		assert.Nil(t, result)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "create chunks")
+
+		tx.AssertNotCalled(t, "Commit")
+		tx.AssertCalled(t, "Rollback", mock.Anything)
+
+		tb.AssertExpectations(t)
+		tx.AssertExpectations(t)
+	})
+
+	t.Run("transaction rollback path: Update fails, later steps NOT called", func(t *testing.T) {
+		t.Parallel()
+
+		pr := new(mockPatternRepo)
+		er := new(mockEnrichmentRepo)
+		gr := new(mockGraphRepo)
+		ar := new(mockAgentRepo)
+		tb := new(mockTxBeginner)
+		cr := new(mockChunkRepo)
+		tx := new(mockPgxTx)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+
+		input := patternsvc.UpdateInput{
+			Name:    "go-error-handling-v2",
+			Content: "[//]: pattern\n## Section One\nNew content.",
+		}
+
+		tb.On("Begin", mock.Anything).Return(tx, nil)
+		tx.On("Rollback", mock.Anything).Return(nil)
+
+		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		pr.On("Update", mock.Anything, mock.Anything).Return(errors.New("update failed"))
+
+		result, err := svc.Update(context.Background(), testPatternID, input)
+
+		assert.Nil(t, result)
+		require.Error(t, err)
+
+		tx.AssertNotCalled(t, "Commit")
+		tx.AssertCalled(t, "Rollback", mock.Anything)
+		cr.AssertNotCalled(t, "DeleteByPatternID")
+		cr.AssertNotCalled(t, "CreateBatch")
+
+		tb.AssertExpectations(t)
+		tx.AssertExpectations(t)
+	})
+
+	t.Run("publishJob called for each chunk after transaction commits", func(t *testing.T) {
+		t.Parallel()
+
+		pr := new(mockPatternRepo)
+		er := new(mockEnrichmentRepo)
+		gr := new(mockGraphRepo)
+		ar := new(mockAgentRepo)
+		tb := new(mockTxBeginner)
+		cr := new(mockChunkRepo)
+		tx := new(mockPgxTx)
+		pub := &mockPublisher{}
+		svc := newTestServiceWithPublisher(pr, er, gr, ar, tb, cr, pub)
+
+		input := patternsvc.UpdateInput{
+			Name:    "go-error-handling-v2",
+			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
+		}
+
+		tb.On("Begin", mock.Anything).Return(tx, nil)
+		tx.On("Commit", mock.Anything).Return(nil)
+		tx.On("Rollback", mock.Anything).Return(nil)
+
+		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		pr.On("Update", mock.Anything, mock.Anything).Return(nil)
+		cr.On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
+		cr.On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
+			return len(chunks) == 2
+		})).Return(nil)
+
+		er.On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
+			return j.ChunkID != nil
+		})).Run(func(args mock.Arguments) {
+			j := args.Get(1).(*enrichmentrepo.Job)
+			j.ID = uuid.New()
+		}).Return(nil).Times(2)
+
+		result, err := svc.Update(context.Background(), testPatternID, input)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, pub.publishedIDs, 2, "expected publishJob called once per chunk")
 	})
 }
 

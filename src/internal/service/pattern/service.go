@@ -150,8 +150,6 @@ type patternService struct {
 }
 
 // New creates a new pattern Service backed by the given repositories.
-// chunkRepo may be nil during the transitional period; pass a real implementation
-// once it is wired (Task 9).
 func New(
 	patternRepo patternrepo.Repository,
 	enrichmentRepo enrichmentrepo.Repository,
@@ -492,8 +490,14 @@ func (s *patternService) updateWithTransaction(
 	// Rollback is a no-op after a successful Commit (pgx guarantees this).
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Construct tx-scoped repos so all four writes participate in the same
+	// Postgres transaction. Using the pool-backed repos here would execute
+	// each write on an independent connection and leave tx.Commit a no-op.
+	txPatternRepo := s.patternRepo.WithTx(tx)
+	txChunkRepo := s.chunkRepo.WithTx(tx)
+
 	// Step 1: update the pattern row.
-	if err = s.patternRepo.Update(ctx, existing); err != nil {
+	if err = txPatternRepo.Update(ctx, existing); err != nil {
 		if errors.Is(err, patternrepo.ErrNameExists) {
 			return nil, fmt.Errorf("%w: pattern %q", service.ErrConflict, existing.Name)
 		}
@@ -502,13 +506,13 @@ func (s *patternService) updateWithTransaction(
 
 	// Step 2: replace agent associations (conditional).
 	if len(resolvedAssocs) > 0 {
-		if err = s.patternRepo.SetAgentAssociations(ctx, existing.ID, resolvedAssocs); err != nil {
+		if err = txPatternRepo.SetAgentAssociations(ctx, existing.ID, resolvedAssocs); err != nil {
 			return nil, fmt.Errorf("update pattern: setting associations: %w", err)
 		}
 	}
 
 	// Step 3: delete stale chunks (cascades to their enrichment jobs via ON DELETE CASCADE).
-	if err = s.chunkRepo.DeleteByPatternID(ctx, existing.ID); err != nil {
+	if err = txChunkRepo.DeleteByPatternID(ctx, existing.ID); err != nil {
 		return nil, fmt.Errorf("update pattern: delete stale chunks: %w", err)
 	}
 
@@ -523,7 +527,7 @@ func (s *patternService) updateWithTransaction(
 			Content:      rc.Content,
 		}
 	}
-	if err = s.chunkRepo.CreateBatch(ctx, newChunks); err != nil {
+	if err = txChunkRepo.CreateBatch(ctx, newChunks); err != nil {
 		return nil, fmt.Errorf("update pattern: create chunks: %w", err)
 	}
 

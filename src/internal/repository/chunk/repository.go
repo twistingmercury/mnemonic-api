@@ -50,6 +50,10 @@ type Repository interface {
 
 	// AnyFailedForPattern returns true if any chunk for the pattern has status "failed".
 	AnyFailedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error)
+
+	// WithTx returns a Repository that executes all operations within db.
+	// Use this to enlist the repository in a caller-owned transaction.
+	WithTx(db repository.DBTX) Repository
 }
 
 // pgxRepository is a PostgreSQL implementation of Repository using pgx.
@@ -59,6 +63,11 @@ type pgxRepository struct {
 
 // NewRepository creates a new PostgreSQL-backed Repository.
 func NewRepository(db repository.DBTX) Repository {
+	return &pgxRepository{db: db}
+}
+
+// WithTx returns a new Repository that executes all operations within db.
+func (r *pgxRepository) WithTx(db repository.DBTX) Repository {
 	return &pgxRepository{db: db}
 }
 

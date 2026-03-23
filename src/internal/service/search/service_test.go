@@ -126,6 +126,10 @@ func (m *mockPatternRepo) Exists(ctx context.Context, id uuid.UUID) (bool, error
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockPatternRepo) WithTx(_ repository.DBTX) pattern.Repository {
+	return m
+}
+
 // --- Mock: agentrepo.Repository ---
 
 type mockAgentRepo struct {
@@ -247,6 +251,10 @@ func (m *mockChunkRepo) AllEnrichedForPattern(ctx context.Context, patternID uui
 func (m *mockChunkRepo) AnyFailedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error) {
 	args := m.Called(ctx, patternID)
 	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockChunkRepo) WithTx(_ repository.DBTX) chunkrepo.Repository {
+	return m
 }
 
 // --- Helpers ---
