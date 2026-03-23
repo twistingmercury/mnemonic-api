@@ -266,9 +266,9 @@ func (s *patternService) Create(ctx context.Context, input CreateInput) (*patter
 		}
 	}
 
-	// Split content into chunks and create them (when chunk repo is wired).
-	if s.chunkRepo != nil {
-		rawChunks := splitIntoChunks(input.Content)
+	// Split content into chunks and create them.
+	rawChunks := splitIntoChunks(input.Content)
+	if len(rawChunks) > 0 {
 		chunks := make([]*chunkrepo.Chunk, len(rawChunks))
 		for i, rc := range rawChunks {
 			chunks[i] = &chunkrepo.Chunk{
@@ -301,17 +301,6 @@ func (s *patternService) Create(ctx context.Context, input CreateInput) (*patter
 				Int("total", len(chunks)).
 				Msg("failed to create chunk enrichment jobs — affected chunks will not be embedded until re-PUT")
 		}
-	} else {
-		// Fallback: create a single pattern-level enrichment job.
-		pid := pattern.ID
-		job := enrichmentrepo.Job{
-			PatternID: &pid,
-			Status:    enrichmentrepo.StatusPending,
-		}
-		if err := s.enrichmentRepo.Create(ctx, &job); err != nil {
-			return nil, fmt.Errorf("create pattern: creating enrichment job: %w", err)
-		}
-		s.publishJob(ctx, job.ID)
 	}
 
 	// Best-effort Neo4j sync for agent associations.
@@ -393,47 +382,15 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 	existing.Version = input.Version
 	existing.RelatedPatterns = input.RelatedPatterns
 
-	// Trigger re-enrichment. When a chunk repository is configured, perform the
-	// four mutating writes (pattern update, agent associations, delete stale chunks,
-	// create new chunks) inside a single Postgres transaction so a crash between
-	// steps cannot leave chunks without enrichment jobs.
-	// Without a chunk repository, fall back to a legacy pattern-level job.
+	// Perform the four mutating writes (pattern update, agent associations,
+	// delete stale chunks, create new chunks) inside a single Postgres
+	// transaction so a crash between steps cannot leave chunks without
+	// enrichment jobs.
 	var newChunks []*chunkrepo.Chunk
-	if s.chunkRepo != nil {
-		var txErr error
-		newChunks, txErr = s.updateWithTransaction(ctx, existing, resolvedAssocs)
-		if txErr != nil {
-			return nil, txErr
-		}
-	} else {
-		if err := s.patternRepo.Update(ctx, existing); err != nil {
-			if errors.Is(err, patternrepo.ErrNameExists) {
-				return nil, fmt.Errorf("%w: pattern %q", service.ErrConflict, input.Name)
-			}
-			return nil, fmt.Errorf("update pattern: %w", err)
-		}
-
-		// Set agent associations if provided.
-		if len(resolvedAssocs) > 0 {
-			if err := s.patternRepo.SetAgentAssociations(ctx, existing.ID, resolvedAssocs); err != nil {
-				return nil, fmt.Errorf("update pattern: setting associations: %w", err)
-			}
-		}
-
-		// Legacy path: pattern-level enrichment job.
-		eid := existing.ID
-		job := enrichmentrepo.Job{
-			PatternID: &eid,
-			Status:    enrichmentrepo.StatusPending,
-		}
-		if err := s.enrichmentRepo.Create(ctx, &job); err != nil {
-			if !errors.Is(err, enrichmentrepo.ErrJobAlreadyPending) {
-				return nil, fmt.Errorf("update pattern: creating enrichment job: %w", err)
-			}
-			// A pending job already exists; skip creating a duplicate.
-		} else {
-			s.publishJob(ctx, job.ID)
-		}
+	var txErr error
+	newChunks, txErr = s.updateWithTransaction(ctx, existing, resolvedAssocs)
+	if txErr != nil {
+		return nil, txErr
 	}
 
 	// Enqueue per-chunk enrichment jobs outside the transaction. Failures are
@@ -527,8 +484,10 @@ func (s *patternService) updateWithTransaction(
 			Content:      rc.Content,
 		}
 	}
-	if err = txChunkRepo.CreateBatch(ctx, newChunks); err != nil {
-		return nil, fmt.Errorf("update pattern: create chunks: %w", err)
+	if len(newChunks) > 0 {
+		if err = txChunkRepo.CreateBatch(ctx, newChunks); err != nil {
+			return nil, fmt.Errorf("update pattern: create chunks: %w", err)
+		}
 	}
 
 	if err = tx.Commit(ctx); err != nil {
@@ -673,10 +632,6 @@ func (s *patternService) ListChunks(ctx context.Context, patternID uuid.UUID) ([
 			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
 		}
 		return nil, fmt.Errorf("list chunks: %w", err)
-	}
-
-	if s.chunkRepo == nil {
-		return []*chunkrepo.Chunk{}, nil
 	}
 
 	chunks, err := s.chunkRepo.ListByPatternID(ctx, patternID)
