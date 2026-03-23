@@ -87,7 +87,7 @@ The Phase 2 code review (`docs/code-reviews/phase-02-queue-publishing.md`) ident
   - Verify: `make build`
   - Done: `make build` exits 0; `TestPublishJobError` subtests exist and pass inside the Docker build stage.
 
-- [ ] **Cycle 4 - Remove dead nil-guard branches**: Delete the unreachable `if s.chunkRepo == nil` guards in `Create`, `Update`, and `ListChunks` (M2), and update `newTestService` to pass a real mock chunk repo so no existing test regresses (L4).
+- [x] **Cycle 4 - Remove dead nil-guard branches**: Delete the unreachable `if s.chunkRepo == nil` guards in `Create`, `Update`, and `ListChunks` (M2), and update `newTestService` to pass a real mock chunk repo so no existing test regresses (L4).
   - Agent: `go software engineer`
   - Files: `src/internal/service/pattern/service.go`, `src/internal/service/pattern/service_test.go`
   - Steps:

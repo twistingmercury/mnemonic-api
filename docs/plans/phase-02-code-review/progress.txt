@@ -45,3 +45,29 @@ Notes:
     typed (*mockChunkRepo)(nil) results in a non-nil interface and takes the
     chunk path instead of the legacy else-branch.
 Commit: cf2b468  Tag: phase-02-cr-cycle-3
+
+## Cycle 4 - Remove dead nil-guard branches
+Date: 2026-03-23
+Summary:
+  - Removed if s.chunkRepo != nil guard in Create; chunk-aware path is now
+    unconditional. Added if len(rawChunks) > 0 guard before CreateBatch so
+    plain content (no [//]: pattern decorators) skips the chunk write (M2).
+  - Removed if s.chunkRepo != nil guard in Update; updateWithTransaction is
+    now called unconditionally. Legacy else-block deleted entirely.
+  - Added if len(newChunks) > 0 guard inside updateWithTransaction before
+    txChunkRepo.CreateBatch for consistency with Create.
+  - Removed if s.chunkRepo == nil early-return guard in ListChunks.
+  - Updated newTestService to pass new(mockChunkRepo) instead of nil (L4).
+  - Updated newTestServiceWithFailingPublisher to accept cr *mockChunkRepo.
+  - Fixed TestCreate/happy path and neo4j-failure subtest: removed now-dead
+    er.On("Create") expectation for pattern-level enrichment jobs.
+  - Fixed TestUpdate/happy path: switched to newTestServiceWithChunkRepo,
+    added transaction lifecycle expectations, added cr.DeleteByPatternID.
+  - Fixed TestListChunks/nil chunk repo subtest: renamed and updated to use
+    real chunk repo mock returning empty slice.
+  - Fixed TestPublishJobError subtests: updated call sites for new
+    newTestServiceWithFailingPublisher signature; removed dead er expectations.
+Verification:
+  - grep chunkRepo == nil src/internal/service/pattern/service.go -> no matches.
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+Commit: 6b19dca  Tag: phase-02-cr-cycle-4
