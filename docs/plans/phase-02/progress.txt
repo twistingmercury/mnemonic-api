@@ -38,3 +38,13 @@ internal/service/openai/extraction.go, internal/service/openai/extraction_test.g
 removed NewExtractionServiceForTest from export_test.go.
 Verification: go build ./... and go test ./... both exit 0; make analyze all pass.
 Notes: None.
+
+Cycle 5 - E2E test updates
+Date: 2026-03-23
+Summary: Removed four enrichment-status polling loops from patterns_test.go; replaced each
+with a single GET asserting enrichment_status == "pending" (terminal state when no enricher
+runs in E2E); added pending assertion to TestPatternEnrichment_ContentUpdateTriggersReenrichment
+after PUT; removed unused "time" import.
+Verification: cd src/tests/e2e && go build ./... exits 0; no polling loops remain; no
+enrichment packages imported or called.
+Notes: None.

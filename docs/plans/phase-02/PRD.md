@@ -110,7 +110,7 @@ Replace `mnemonic-api`'s internal polling enrichment worker with RabbitMQ queue 
   - Verify: `cd src && go build ./... && go test ./...`
   - Done: Both `go build` and `go test` exit 0 with no errors or test failures; the deleted packages no longer exist on disk.
 
-- [ ] **Cycle 5 - E2E test updates**: Update E2E patterns tests to remove enrichment-status polling and accept `pending` as the terminal state in the test environment.
+- [x] **Cycle 5 - E2E test updates**: Update E2E patterns tests to remove enrichment-status polling and accept `pending` as the terminal state in the test environment.
   - Agent: `go e2e test engineer`
   - Files: `src/tests/e2e/api/patterns_test.go`
   - Steps:
