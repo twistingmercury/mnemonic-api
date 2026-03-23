@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -35,6 +36,7 @@ type RabbitMQPublisher struct {
 	cfg  PublisherConfig
 	conn *amqp.Connection
 	ch   *amqp.Channel
+	mu   sync.Mutex
 }
 
 // NewPublisher dials the broker, opens a channel, and declares the destination
@@ -81,8 +83,11 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, jobID uuid.UUID) error 
 		Body:         body,
 	}
 
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if err = p.ch.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg); err != nil {
-		if reconnErr := p.reconnect(); reconnErr != nil {
+		if reconnErr := p.reconnect(ctx); reconnErr != nil {
 			return fmt.Errorf("rabbitmq: publish failed and reconnect failed: %w", errors.Join(err, reconnErr))
 		}
 		if retryErr := p.ch.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg); retryErr != nil {
@@ -95,7 +100,7 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, jobID uuid.UUID) error 
 
 // reconnect closes the stale channel and connection, then re-dials the broker
 // and re-declares the queue. It replaces p.conn and p.ch on success.
-func (p *RabbitMQPublisher) reconnect() error {
+func (p *RabbitMQPublisher) reconnect(ctx context.Context) error {
 	// Ignore close errors on stale resources.
 	if p.ch != nil {
 		_ = p.ch.Close()
@@ -104,7 +109,11 @@ func (p *RabbitMQPublisher) reconnect() error {
 		_ = p.conn.Close()
 	}
 
-	time.Sleep(p.cfg.ReconnectDelay)
+	select {
+	case <-time.After(p.cfg.ReconnectDelay):
+	case <-ctx.Done():
+		return fmt.Errorf("rabbitmq: reconnect cancelled: %w", ctx.Err())
+	}
 
 	conn, err := amqp.Dial(p.cfg.amqpURL())
 	if err != nil {
@@ -131,6 +140,9 @@ func (p *RabbitMQPublisher) reconnect() error {
 // Close releases the channel and connection. Both close errors are joined and
 // returned together so callers observe the full picture.
 func (p *RabbitMQPublisher) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	var chErr, connErr error
 	if p.ch != nil {
 		chErr = p.ch.Close()
