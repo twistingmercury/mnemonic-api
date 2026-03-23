@@ -66,7 +66,7 @@ Replace `mnemonic-api`'s internal polling enrichment worker with RabbitMQ queue 
   - Verify: `cd src && go build ./internal/config/... && go test ./internal/config/...`
   - Done: Both commands exit 0 with no errors or test failures.
 
-- [ ] **Cycle 2 - Publisher package**: Add `github.com/rabbitmq/amqp091-go` to `go.mod` and create the `Publisher` interface and RabbitMQ publisher implementation.
+- [x] **Cycle 2 - Publisher package**: Add `github.com/rabbitmq/amqp091-go` to `go.mod` and create the `Publisher` interface and RabbitMQ publisher implementation.
   - Agent: `go software engineer`
   - Files: `src/internal/queue/queue.go`, `src/internal/queue/rabbitmq/publisher.go`, `src/go.mod`, `src/go.sum`
   - Steps:

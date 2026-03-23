@@ -6,3 +6,13 @@ queue settings in SetDefaults.
 Verification: go build ./internal/config/... and go test ./internal/config/... both exit 0;
 make analyze (goimports, golangci-lint, govulncheck, gosec) all pass.
 Notes: None.
+
+Cycle 2 - Publisher package
+Date: 2026-03-23
+Summary: Added github.com/rabbitmq/amqp091-go dependency; created src/internal/queue/queue.go
+with Publisher interface (Publish/Close); created src/internal/queue/rabbitmq/publisher.go
+with RabbitMQPublisher implementing dial, durable queue declare, JSON publish with one-retry
+reconnect, and Close with joined errors.
+Verification: go build ./internal/queue/... and go vet ./internal/queue/... exit 0;
+make analyze (goimports, golangci-lint, govulncheck, gosec) all pass.
+Notes: gopls shows workspace warnings (no go.work for src/) but these do not affect compilation.
