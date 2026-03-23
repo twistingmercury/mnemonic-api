@@ -1,0 +1,8 @@
+Cycle 1 - Queue config types and defaults
+Date: 2026-03-23
+Summary: Added QueueConfig and RabbitMQConfig structs to config.go; added Queue field to
+MnemonicConfig; added queue constants to defaults.go; registered viper defaults for all
+queue settings in SetDefaults.
+Verification: go build ./internal/config/... and go test ./internal/config/... both exit 0;
+make analyze (goimports, golangci-lint, govulncheck, gosec) all pass.
+Notes: None.

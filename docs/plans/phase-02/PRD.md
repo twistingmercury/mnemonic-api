@@ -54,7 +54,7 @@ Replace `mnemonic-api`'s internal polling enrichment worker with RabbitMQ queue 
 
 ## Implementation Plan
 
-- [ ] **Cycle 1 - Queue config types and defaults**: Add `QueueConfig` and `RabbitMQConfig` types to `config.go`, add queue constants to `defaults.go`, and register viper defaults in `SetDefaults`.
+- [x] **Cycle 1 - Queue config types and defaults**: Add `QueueConfig` and `RabbitMQConfig` types to `config.go`, add queue constants to `defaults.go`, and register viper defaults in `SetDefaults`.
   - Agent: `go software engineer`
   - Files: `src/internal/config/config.go`, `src/internal/config/defaults.go`
   - Steps:
