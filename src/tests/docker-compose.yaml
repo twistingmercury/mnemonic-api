@@ -37,7 +37,7 @@ services:
     image: rabbitmq:3-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: mnemonic
-      RABBITMQ_DEFAULT_PASS: mnemonic
+      RABBITMQ_DEFAULT_PASS: mnemonic_dev
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -62,7 +62,7 @@ services:
       MNEMONIC_LOGGING_LEVEL: error
       MNEMONIC_QUEUE_RABBITMQ_HOST: rabbitmq
       MNEMONIC_QUEUE_RABBITMQ_USER: mnemonic
-      MNEMONIC_QUEUE_RABBITMQ_PASSWORD: mnemonic
+      MNEMONIC_QUEUE_RABBITMQ_PASSWORD: mnemonic_dev
     depends_on:
       neo4j:
         condition: service_healthy
