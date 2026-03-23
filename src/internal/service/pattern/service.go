@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
+	queue "github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/repository"
 	agentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/agent"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
@@ -144,6 +145,7 @@ type patternService struct {
 	agentRepo      agentrepo.Repository
 	chunkRepo      chunkrepo.Repository
 	pool           repository.TxBeginner
+	publisher      queue.Publisher
 	logger         zerolog.Logger
 }
 
@@ -157,6 +159,7 @@ func New(
 	agentRepo agentrepo.Repository,
 	pool repository.TxBeginner,
 	chunkRepo chunkrepo.Repository,
+	publisher queue.Publisher,
 	logger zerolog.Logger,
 ) Service {
 	return &patternService{
@@ -166,6 +169,7 @@ func New(
 		agentRepo:      agentRepo,
 		chunkRepo:      chunkRepo,
 		pool:           pool,
+		publisher:      publisher,
 		logger:         logger,
 	}
 }
@@ -216,6 +220,17 @@ func splitIntoChunks(content string) []chunk {
 	flush()
 
 	return chunks
+}
+
+// publishJob enqueues jobID for async enrichment. Errors are best-effort:
+// the job row already exists in PostgreSQL so the pattern is never lost.
+func (s *patternService) publishJob(ctx context.Context, jobID uuid.UUID) {
+	if err := s.publisher.Publish(ctx, jobID); err != nil {
+		s.logger.Warn().
+			Err(err).
+			Str("job_id", jobID.String()).
+			Msg("failed to publish enrichment job — job remains pending in postgres")
+	}
 }
 
 // Create stores a new pattern, sets agent associations, creates an enrichment
@@ -278,6 +293,8 @@ func (s *patternService) Create(ctx context.Context, input CreateInput) (*patter
 			job := enrichmentrepo.Job{ChunkID: &chunkID}
 			if jobErr := s.enrichmentRepo.Create(ctx, &job); jobErr != nil {
 				jobFailures++
+			} else {
+				s.publishJob(ctx, job.ID)
 			}
 		}
 		if jobFailures > 0 {
@@ -296,6 +313,7 @@ func (s *patternService) Create(ctx context.Context, input CreateInput) (*patter
 		if err := s.enrichmentRepo.Create(ctx, &job); err != nil {
 			return nil, fmt.Errorf("create pattern: creating enrichment job: %w", err)
 		}
+		s.publishJob(ctx, job.ID)
 	}
 
 	// Best-effort Neo4j sync for agent associations.
@@ -415,6 +433,8 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 				return nil, fmt.Errorf("update pattern: creating enrichment job: %w", err)
 			}
 			// A pending job already exists; skip creating a duplicate.
+		} else {
+			s.publishJob(ctx, job.ID)
 		}
 	}
 
@@ -429,6 +449,8 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 		}
 		if err := s.enrichmentRepo.Create(ctx, &job); err != nil {
 			jobFailures++
+		} else {
+			s.publishJob(ctx, job.ID)
 		}
 	}
 	if jobFailures > 0 {

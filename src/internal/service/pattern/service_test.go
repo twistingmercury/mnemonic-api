@@ -469,6 +469,23 @@ func (m *mockChunkRepo) AnyFailedForPattern(ctx context.Context, patternID uuid.
 	return args.Bool(0), args.Error(1)
 }
 
+// ---------- Mock: queue.Publisher ----------
+
+type mockPublisher struct {
+	publishedIDs []uuid.UUID
+	publishErr   error
+}
+
+func (m *mockPublisher) Publish(_ context.Context, jobID uuid.UUID) error {
+	if m.publishErr != nil {
+		return m.publishErr
+	}
+	m.publishedIDs = append(m.publishedIDs, jobID)
+	return nil
+}
+
+func (m *mockPublisher) Close() error { return nil }
+
 // ---------- Helpers ----------
 
 var (
@@ -487,7 +504,7 @@ func newTestService(
 ) patternsvc.Service {
 	logger := zerolog.Nop()
 	// chunkRepo is nil: chunk creation is skipped during the transitional period.
-	return patternsvc.New(pr, er, gr, ar, tb, nil, logger)
+	return patternsvc.New(pr, er, gr, ar, tb, nil, &mockPublisher{}, logger)
 }
 
 func newTestServiceWithChunkRepo(
@@ -499,7 +516,7 @@ func newTestServiceWithChunkRepo(
 	cr *mockChunkRepo,
 ) patternsvc.Service {
 	logger := zerolog.Nop()
-	return patternsvc.New(pr, er, gr, ar, tb, cr, logger)
+	return patternsvc.New(pr, er, gr, ar, tb, cr, &mockPublisher{}, logger)
 }
 
 func newTestServiceWithChunkRepoAndLogger(
@@ -511,7 +528,7 @@ func newTestServiceWithChunkRepoAndLogger(
 	cr *mockChunkRepo,
 	logger zerolog.Logger,
 ) patternsvc.Service {
-	return patternsvc.New(pr, er, gr, ar, tb, cr, logger)
+	return patternsvc.New(pr, er, gr, ar, tb, cr, &mockPublisher{}, logger)
 }
 
 func testCreateInput() patternsvc.CreateInput {
