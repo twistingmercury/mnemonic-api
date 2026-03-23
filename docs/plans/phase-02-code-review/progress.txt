@@ -27,3 +27,21 @@ Verification:
   - grep RabbitMQPublisher src/ -> no matches.
   - grep 'queue "github.com' service.go server.go -> no matches.
 Commit: 8482d5b  Tag: phase-02-cr-cycle-2
+
+## Cycle 3 - publishErr test coverage
+Date: 2026-03-23
+Summary:
+  - Added TestPublishJobError with two subtests (Create, Update) exercising
+    the warn-only publish-failure path in publishJob (L3).
+  - Used newTestServiceWithFailingPublisher helper (nil chunkRepo / legacy path)
+    to avoid the nil-interface-in-concrete-type trap with mockChunkRepo.
+  - Updated newTestService comment to document its intentional nil chunkRepo
+    scope and pointer to newTestServiceWithChunkRepo (partial L4).
+Verification:
+  - go test ./internal/service/pattern/... -> passed.
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+Notes:
+  - nil chunkRepo must be passed as untyped nil to patternsvc.New; passing a
+    typed (*mockChunkRepo)(nil) results in a non-nil interface and takes the
+    chunk path instead of the legacy else-branch.
+Commit: cf2b468  Tag: phase-02-cr-cycle-3

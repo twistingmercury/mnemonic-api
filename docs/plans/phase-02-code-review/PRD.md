@@ -76,7 +76,7 @@ The Phase 2 code review (`docs/code-reviews/phase-02-queue-publishing.md`) ident
   - Verify: `make build`
   - Done: `make build` exits 0; no `RabbitMQPublisher` identifier exists in the repo; no `queue "..."` import alias exists in service.go or server.go.
 
-- [ ] **Cycle 3 - publishErr test coverage**: Add tests that exercise the warn-only publish-failure path in `publishJob` and update the `newTestService` comment to document its intentional scope (L3, partial L4).
+- [x] **Cycle 3 - publishErr test coverage**: Add tests that exercise the warn-only publish-failure path in `publishJob` and update the `newTestService` comment to document its intentional scope (L3, partial L4).
   - Agent: `go software engineer`
   - Files: `src/internal/service/pattern/service_test.go`
   - Steps:
