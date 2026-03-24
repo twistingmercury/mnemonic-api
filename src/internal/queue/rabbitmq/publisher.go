@@ -28,7 +28,7 @@ type PublisherConfig struct {
 	Host           string
 	Port           int
 	User           string
-	Password       string // #nosec G101 — value supplied via config, not hardcoded in source
+	Password       string // #nosec G101,G117 — value supplied via config, not hardcoded in source
 	VHost          string
 	Queue          string
 	ReconnectDelay time.Duration
