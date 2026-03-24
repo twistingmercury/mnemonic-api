@@ -1,0 +1,68 @@
+Cycle 1 - Queue config types and defaults
+Date: 2026-03-23
+Summary: Added QueueConfig and RabbitMQConfig structs to config.go; added Queue field to
+MnemonicConfig; added queue constants to defaults.go; registered viper defaults for all
+queue settings in SetDefaults.
+Verification: go build ./internal/config/... and go test ./internal/config/... both exit 0;
+make analyze (goimports, golangci-lint, govulncheck, gosec) all pass.
+Notes: None.
+
+Cycle 2 - Publisher package
+Date: 2026-03-23
+Summary: Added github.com/rabbitmq/amqp091-go dependency; created src/internal/queue/queue.go
+with Publisher interface (Publish/Close); created src/internal/queue/rabbitmq/publisher.go
+with RabbitMQPublisher implementing dial, durable queue declare, JSON publish with one-retry
+reconnect, and Close with joined errors.
+Verification: go build ./internal/queue/... and go vet ./internal/queue/... exit 0;
+make analyze (goimports, golangci-lint, govulncheck, gosec) all pass.
+Notes: gopls shows workspace warnings (no go.work for src/) but these do not affect compilation.
+
+Cycle 3 - Pattern service publishing
+Date: 2026-03-23
+Summary: Added queue.Publisher field and parameter to patternService/New(); added publishJob
+best-effort helper; called publishJob after each successful enrichmentRepo.Create in both
+Create and Update (chunk path and legacy path); added mockPublisher to service_test.go and
+updated all three New() helper call sites.
+Verification: go build ./internal/service/pattern/... and go test ./internal/service/pattern/...
+both exit 0. make analyze fails on server.go call site — expected; Cycle 4 fixes it.
+Notes: server.go call site is intentionally broken until Cycle 4 updates it.
+
+Cycle 4 - Server wiring, worker removal, and dead code deletion
+Date: 2026-03-23
+Summary: Wired rabbitmq.NewPublisher in wireDependencies using cfg.Queue.RabbitMQ fields;
+updated patternsvc.New call to pass publisher; changed wireDependencies return type from
+*enricher.Worker to queue.Publisher; removed enrichWorker.Run goroutine from ListenAndServe;
+added defer pub.Close(); removed enrichmentsvc and enricher imports; deleted
+internal/enricher/ (3 files), internal/service/enrichment/ (2 files),
+internal/service/openai/extraction.go, internal/service/openai/extraction_test.go;
+removed NewExtractionServiceForTest from export_test.go.
+Verification: go build ./... and go test ./... both exit 0; make analyze all pass.
+Notes: None.
+
+Cycle 5 - E2E test updates
+Date: 2026-03-23
+Summary: Removed four enrichment-status polling loops from patterns_test.go; replaced each
+with a single GET asserting enrichment_status == "pending" (terminal state when no enricher
+runs in E2E); added pending assertion to TestPatternEnrichment_ContentUpdateTriggersReenrichment
+after PUT; removed unused "time" import.
+Verification: cd src/tests/e2e && go build ./... exits 0; no polling loops remain; no
+enrichment packages imported or called.
+Notes: None.
+
+Cycle 6 - Docker Compose and final validation
+Date: 2026-03-23
+Summary: Added dev_rabbitmq service to docker-compose.yaml (image rabbitmq:3-management-alpine,
+ports 5672/15672, healthcheck via rabbitmq-diagnostics ping, restart unless-stopped, explicit
+credentials RABBITMQ_DEFAULT_USER/PASS); added rabbitmq to dev_api depends_on (service_healthy)
+and MNEMONIC_QUEUE_RABBITMQ_HOST/USER/PASSWORD env vars. Added rabbitmq service to
+src/tests/docker-compose.yaml with same image and healthcheck but no port exposure; added to
+mnemonic_api depends_on and env vars. Also upgraded github.com/modelcontextprotocol/go-sdk
+v1.3.1 to v1.4.1 to resolve GO-2026-4773 and GO-2026-4770 (vulnerabilities exposed when Docker
+layer cache was invalidated during the build).
+Verification: docker compose -f docker-compose.yaml config --quiet exits 0;
+docker compose -f src/tests/docker-compose.yaml config --quiet exits 0; make build exits 0
+(Docker image built, all unit tests passed inside Docker, E2E tests container exited with code 0).
+Notes: RabbitMQ guest user is restricted to localhost connections — explicit credentials are
+required for container-to-container connectivity. govulncheck failures in
+modelcontextprotocol/go-sdk were pre-existing but hidden by Docker layer caching; fixed by
+upgrading to v1.4.1.

@@ -1,0 +1,85 @@
+
+## Cycle 1 - Publisher mutex and ctx-aware reconnect
+Date: 2026-03-23
+Summary:
+  - Added sync.Mutex field to RabbitMQPublisher struct.
+  - Wrapped Publish and Close with p.mu.Lock()/defer p.mu.Unlock() to
+    eliminate the data race (H2) on shared p.ch and p.conn.
+  - Changed reconnect() signature to reconnect(ctx context.Context) error.
+  - Replaced time.Sleep(p.cfg.ReconnectDelay) with a context-aware select,
+    allowing HTTP goroutine cancellation during reconnect delay (M1).
+Verification:
+  - cd src && go test -race ./... → passed, no data races.
+  - make build → passed (linters, unit tests, Docker build, E2E tests).
+Commit: e13dc7a  Tag: phase-02-cr-cycle-1
+
+## Cycle 2 - Publisher cleanup
+Date: 2026-03-23
+Summary:
+  - Renamed concrete type RabbitMQPublisher -> Publisher (struct, receivers, literal).
+  - Fixed wrong nosec annotation: G117 -> G101 with explanatory comment (M3).
+  - Added amqpURL godoc warning about plaintext password in returned string (M4).
+  - Added PublisherConfig godoc note requiring VHost to be URL-safe (L6).
+  - Added package-level operational note: alert on pending enrichment_jobs >10min (M5).
+  - Removed redundant queue import alias from service.go and server.go (L1).
+Verification:
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+  - grep RabbitMQPublisher src/ -> no matches.
+  - grep 'queue "github.com' service.go server.go -> no matches.
+Commit: 8482d5b  Tag: phase-02-cr-cycle-2
+
+## Cycle 3 - publishErr test coverage
+Date: 2026-03-23
+Summary:
+  - Added TestPublishJobError with two subtests (Create, Update) exercising
+    the warn-only publish-failure path in publishJob (L3).
+  - Used newTestServiceWithFailingPublisher helper (nil chunkRepo / legacy path)
+    to avoid the nil-interface-in-concrete-type trap with mockChunkRepo.
+  - Updated newTestService comment to document its intentional nil chunkRepo
+    scope and pointer to newTestServiceWithChunkRepo (partial L4).
+Verification:
+  - go test ./internal/service/pattern/... -> passed.
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+Notes:
+  - nil chunkRepo must be passed as untyped nil to patternsvc.New; passing a
+    typed (*mockChunkRepo)(nil) results in a non-nil interface and takes the
+    chunk path instead of the legacy else-branch.
+Commit: cf2b468  Tag: phase-02-cr-cycle-3
+
+## Cycle 4 - Remove dead nil-guard branches
+Date: 2026-03-23
+Summary:
+  - Removed if s.chunkRepo != nil guard in Create; chunk-aware path is now
+    unconditional. Added if len(rawChunks) > 0 guard before CreateBatch so
+    plain content (no [//]: pattern decorators) skips the chunk write (M2).
+  - Removed if s.chunkRepo != nil guard in Update; updateWithTransaction is
+    now called unconditionally. Legacy else-block deleted entirely.
+  - Added if len(newChunks) > 0 guard inside updateWithTransaction before
+    txChunkRepo.CreateBatch for consistency with Create.
+  - Removed if s.chunkRepo == nil early-return guard in ListChunks.
+  - Updated newTestService to pass new(mockChunkRepo) instead of nil (L4).
+  - Updated newTestServiceWithFailingPublisher to accept cr *mockChunkRepo.
+  - Fixed TestCreate/happy path and neo4j-failure subtest: removed now-dead
+    er.On("Create") expectation for pattern-level enrichment jobs.
+  - Fixed TestUpdate/happy path: switched to newTestServiceWithChunkRepo,
+    added transaction lifecycle expectations, added cr.DeleteByPatternID.
+  - Fixed TestListChunks/nil chunk repo subtest: renamed and updated to use
+    real chunk repo mock returning empty slice.
+  - Fixed TestPublishJobError subtests: updated call sites for new
+    newTestServiceWithFailingPublisher signature; removed dead er expectations.
+Verification:
+  - grep chunkRepo == nil src/internal/service/pattern/service.go -> no matches.
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+Commit: 6b19dca  Tag: phase-02-cr-cycle-4
+
+## Cycle 5 - Compose alignment and operational doc
+Date: 2026-03-23
+Summary:
+  - Changed RABBITMQ_DEFAULT_PASS from mnemonic to mnemonic_dev in the
+    rabbitmq service environment block (L5).
+  - Changed MNEMONIC_QUEUE_RABBITMQ_PASSWORD from mnemonic to mnemonic_dev
+    in the mnemonic_api service environment block.
+  - Both password values now match docker-compose.yaml.
+Verification:
+  - make build -> passed (linters, unit tests, Docker build, E2E tests).
+Commit: 4403e30  Tag: phase-02-cr-cycle-5

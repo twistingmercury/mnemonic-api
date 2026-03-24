@@ -82,6 +82,17 @@ const (
 	DefaultLoggingIncludeCaller = false
 )
 
+// Default values for queue configuration
+const (
+	DefaultQueueProvider          = "rabbitmq"
+	DefaultRabbitMQHost           = "localhost"
+	DefaultRabbitMQPort           = 5672
+	DefaultRabbitMQUser           = "guest"
+	DefaultRabbitMQVHost          = "/"
+	DefaultRabbitMQQueue          = "enrichment-jobs"
+	DefaultRabbitMQReconnectDelay = 5 * time.Second
+)
+
 // Default values for observability configuration
 const (
 	DefaultMetricsEnabled      = true
