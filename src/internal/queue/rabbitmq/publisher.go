@@ -21,7 +21,9 @@ import (
 )
 
 // PublisherConfig holds the connection parameters for the RabbitMQ publisher.
-// VHost must be URL-safe; names containing special characters must be percent-encoded by the caller before assignment.
+// VHost must be URL-safe; names containing special characters must be percent-encoded
+// by the caller before assignment. Credentials are passed via SASL and never embedded
+// in a URL string.
 type PublisherConfig struct {
 	Host           string
 	Port           int
@@ -30,12 +32,6 @@ type PublisherConfig struct {
 	VHost          string
 	Queue          string
 	ReconnectDelay time.Duration
-}
-
-// amqpURL builds the AMQP connection URL from the config fields.
-// The returned string embeds a plaintext password and must never be logged or included in error messages.
-func (c PublisherConfig) amqpURL() string {
-	return fmt.Sprintf("amqp://%s:%s@%s:%d/%s", c.User, c.Password, c.Host, c.Port, c.VHost)
 }
 
 // Publisher implements queue.Publisher backed by a RabbitMQ broker.
@@ -50,7 +46,13 @@ type Publisher struct {
 // queue. It returns an error if any step fails, cleaning up partial resources
 // before returning.
 func NewPublisher(cfg PublisherConfig) (queue.Publisher, error) {
-	conn, err := amqp.Dial(cfg.amqpURL())
+	conn, err := amqp.DialConfig(
+		fmt.Sprintf("amqp://%s:%d/", cfg.Host, cfg.Port),
+		amqp.Config{
+			SASL:  []amqp.Authentication{&amqp.PlainAuth{Username: cfg.User, Password: cfg.Password}}, // #nosec G101 — value supplied via config, not hardcoded in source
+			Vhost: cfg.VHost,
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: dial: %w", err)
 	}
@@ -122,7 +124,13 @@ func (p *Publisher) reconnect(ctx context.Context) error {
 		return fmt.Errorf("rabbitmq: reconnect cancelled: %w", ctx.Err())
 	}
 
-	conn, err := amqp.Dial(p.cfg.amqpURL())
+	conn, err := amqp.DialConfig(
+		fmt.Sprintf("amqp://%s:%d/", p.cfg.Host, p.cfg.Port),
+		amqp.Config{
+			SASL:  []amqp.Authentication{&amqp.PlainAuth{Username: p.cfg.User, Password: p.cfg.Password}}, // #nosec G101 — value supplied via config, not hardcoded in source
+			Vhost: p.cfg.VHost,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("rabbitmq: reconnect dial: %w", err)
 	}
