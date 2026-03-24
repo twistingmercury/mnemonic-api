@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/google/uuid"
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
 )
 
