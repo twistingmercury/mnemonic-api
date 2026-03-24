@@ -131,8 +131,6 @@ type RabbitMQConfig struct {
 
 // EnrichmentConfig contains enrichment worker settings.
 type EnrichmentConfig struct {
-	WorkerCount            int           `mapstructure:"worker_count"`
-	PollInterval           time.Duration `mapstructure:"poll_interval"`
 	MaxAttempts            int           `mapstructure:"max_attempts"`
 	RetryDelay             time.Duration `mapstructure:"retry_delay"`
 	JobTimeout             time.Duration `mapstructure:"job_timeout"`
@@ -328,8 +326,6 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("rate_limit.per_user.burst_size", DefaultRateLimitPerUserBurst)
 
 	// Enrichment defaults
-	v.SetDefault("enrichment.worker_count", DefaultEnrichmentWorkerCount)
-	v.SetDefault("enrichment.poll_interval", DefaultEnrichmentPollInterval)
 	v.SetDefault("enrichment.max_attempts", DefaultEnrichmentMaxAttempts)
 	v.SetDefault("enrichment.retry_delay", DefaultEnrichmentRetryDelay)
 	v.SetDefault("enrichment.job_timeout", DefaultEnrichmentJobTimeout)
@@ -727,20 +723,6 @@ func (c *RateLimitConfig) validate() ValidationErrors {
 
 func (c *EnrichmentConfig) validate() ValidationErrors {
 	var errs ValidationErrors
-
-	if c.WorkerCount < 1 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.worker_count",
-			Message: "must be at least 1",
-		})
-	}
-
-	if c.PollInterval <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.poll_interval",
-			Message: "must be a positive duration",
-		})
-	}
 
 	if c.MaxAttempts < 1 {
 		errs = append(errs, ValidationError{

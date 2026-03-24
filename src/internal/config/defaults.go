@@ -64,8 +64,6 @@ const (
 
 // Default values for enrichment configuration
 const (
-	DefaultEnrichmentWorkerCount            = 2
-	DefaultEnrichmentPollInterval           = 5 * time.Second
 	DefaultEnrichmentMaxAttempts            = 3
 	DefaultEnrichmentRetryDelay             = 30 * time.Second
 	DefaultEnrichmentJobTimeout             = 5 * time.Minute
