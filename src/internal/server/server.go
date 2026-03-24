@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/twistingmercury/mnemonic-api/internal/config"
@@ -85,7 +86,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	}
 
 	// Wire all dependencies.
-	svc, toolDeps, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger)
+	svc, toolDeps, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"))
 	if err != nil {
 		return fmt.Errorf("failed to wire dependencies: %w", err)
 	}
@@ -181,6 +182,7 @@ func wireDependencies(
 	neo4jDriver neo4j.DriverWithContext,
 	cfg *config.MnemonicConfig,
 	logger zerolog.Logger,
+	meter metric.Meter,
 ) (Services, mcpserver.ToolDependencies, queue.Publisher, error) {
 	// Repositories.
 	agentRepo := agentrepo.NewRepository(pgPool)
@@ -203,7 +205,7 @@ func wireDependencies(
 		VHost:          cfg.Queue.RabbitMQ.VHost,
 		Queue:          cfg.Queue.RabbitMQ.Queue,
 		ReconnectDelay: cfg.Queue.RabbitMQ.ReconnectDelay,
-	})
+	}, meter)
 	if err != nil {
 		return Services{}, nil, nil, fmt.Errorf("wire publisher: %w", err)
 	}

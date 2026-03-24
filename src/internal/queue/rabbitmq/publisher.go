@@ -15,6 +15,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/google/uuid"
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
@@ -36,16 +37,32 @@ type PublisherConfig struct {
 
 // Publisher implements queue.Publisher backed by a RabbitMQ broker.
 type Publisher struct {
-	cfg  PublisherConfig
-	conn *amqp.Connection
-	ch   *amqp.Channel
-	mu   sync.Mutex
+	cfg             PublisherConfig
+	conn            *amqp.Connection
+	ch              *amqp.Channel
+	mu              sync.Mutex
+	publishFailures metric.Int64Counter
+}
+
+// newPublishFailuresCounter creates the publish_failures_total counter instrument.
+// It is a separate function so tests can invoke it directly without a live broker.
+func newPublishFailuresCounter(meter metric.Meter) (metric.Int64Counter, error) {
+	return meter.Int64Counter(
+		"mnemonic.queue.publish_failures_total",
+		metric.WithDescription("Total number of times Publish failed after all retry attempts"),
+		metric.WithUnit("{failure}"),
+	)
 }
 
 // NewPublisher dials the broker, opens a channel, and declares the destination
 // queue. It returns an error if any step fails, cleaning up partial resources
-// before returning.
-func NewPublisher(cfg PublisherConfig) (queue.Publisher, error) {
+// before returning. The meter is used to record publish failure counts.
+func NewPublisher(cfg PublisherConfig, meter metric.Meter) (queue.Publisher, error) {
+	counter, err := newPublishFailuresCounter(meter)
+	if err != nil {
+		return nil, fmt.Errorf("rabbitmq: create publish failures counter: %w", err)
+	}
+
 	conn, err := amqp.DialConfig(
 		fmt.Sprintf("amqp://%s:%d/", cfg.Host, cfg.Port),
 		amqp.Config{
@@ -69,7 +86,7 @@ func NewPublisher(cfg PublisherConfig) (queue.Publisher, error) {
 		return nil, fmt.Errorf("rabbitmq: declare queue %q: %w", cfg.Queue, err)
 	}
 
-	return &Publisher{cfg: cfg, conn: conn, ch: ch}, nil
+	return &Publisher{cfg: cfg, conn: conn, ch: ch, publishFailures: counter}, nil
 }
 
 // jobPayload is the JSON body published for each enrichment job.
@@ -97,9 +114,11 @@ func (p *Publisher) Publish(ctx context.Context, jobID uuid.UUID) error {
 
 	if err = p.ch.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg); err != nil {
 		if reconnErr := p.reconnect(ctx); reconnErr != nil {
+			p.publishFailures.Add(ctx, 1)
 			return fmt.Errorf("rabbitmq: publish failed and reconnect failed: %w", errors.Join(err, reconnErr))
 		}
 		if retryErr := p.ch.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg); retryErr != nil {
+			p.publishFailures.Add(ctx, 1)
 			return fmt.Errorf("rabbitmq: publish retry: %w", retryErr)
 		}
 	}
