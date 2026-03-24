@@ -106,7 +106,7 @@ If any check fails:
 - rerun verification
 - do not mark the cycle complete until all checks pass
 
-### Step 6: Commit the changes
+### Step 6: Commit and tag the changes
 
 After verification passes, stage and commit all files produced or modified by
 the cycle:
@@ -118,13 +118,20 @@ the cycle:
 - do not skip hooks
 - if the commit fails, fix the issue and recommit before proceeding
 
+After the commit succeeds, create a signed annotated tag as a rollback point:
+
+- tag name: `phase-02-cr-cycle-N` where N is the cycle number (e.g. `phase-02-cr-cycle-1`)
+- use `git tag -s phase-02-cr-cycle-N -m "Phase 2 CR Cycle N - <title>"`
+- if tag signing fails, stop and report — do not create an unsigned tag
+
 ### Step 7: Update project records
 
-After the commit succeeds:
+After the tag succeeds:
 
 - change the selected PRD cycle from `- [ ]` to `- [x]`
 - append a concise entry to `docs/plans/phase-02-code-review/progress.txt`
 - stage and commit the updated PRD and progress log as a follow-up commit
+- tag the follow-up commit with `phase-02-cr-cycle-N-records` (e.g. `phase-02-cr-cycle-1-records`)
 
 Each progress entry should include:
 
@@ -153,6 +160,7 @@ Do not continue into the next cycle.
 - marking a cycle complete before verification passes
 - marking a cycle done without running `make build`
 - skipping `go test -race ./...` for Cycle 1
+- creating unsigned tags or skipping the tag entirely
 - pushing or merging (user handles git remote operations)
 
 ## Output Contract

@@ -216,6 +216,8 @@ Patterns are the core knowledge artifacts in Mnemonic. Unlike entities (agents, 
 | ADR-005  | Open vocabulary for language/domain | Kebab-case format only; vocabulary governed externally  | SUPERSEDED |
 | ADR-006  | 204 No Content on PUT        | Full-replacement PUT with no body; client issues GET if needed | ACTIVE |
 | ADR-007  | Config-driven vocabulary enforcement | Allow-lists in config; handler enforces; empty list = open | ACTIVE |
+| ADR-008  | RabbitMQ for enrichment job dispatch | Replace inline polling worker with queue publish after DB write | ACTIVE |
+| ADR-009  | Best-effort publish with PG safety net | Failed publish leaves job pending; DB is recovery source | ACTIVE |
 
 ## <a id="adr-005"></a>ADR-005: Open Vocabulary for language and domain Fields
 
@@ -339,6 +341,81 @@ Additionally, operators want to constrain deployments to their team's supported 
 - `config.yaml` and `defaults.go` must be kept in sync; divergence creates a confusing operator experience (see review finding F-03 in `review-cycles-7-12-vocabulary.md`).
 - The startup non-empty validation and the runtime `len > 0` bypass are in tension: open vocabulary is not a reachable mode via normal config loading. This should be resolved by either removing the bypass or removing the startup check (see F-04 in the review).
 - Vocabulary is only enforced on pattern `language` and `domain`. Other resource types do not have configurable vocabulary, creating an asymmetry that must be extended if other types gain these fields.
+
+## <a id="adr-008"></a>ADR-008: RabbitMQ for Enrichment Job Dispatch
+
+**Date:** 2026-03-23
+**Status:** Accepted
+
+### Context
+
+Prior to Phase 2, pattern enrichment was driven by an inline polling worker: a goroutine started at server boot that polled the `enrichment_jobs` table with `FOR UPDATE SKIP LOCKED` and processed jobs synchronously. This kept the stack simple (no broker) but coupled enrichment throughput to the API server's goroutine pool and complicated horizontal scaling — multiple API replicas would compete for the same poll lock.
+
+The goal for Phase 2 is to decouple the enrichment worker into a standalone `mnemonic-enricher` service that can scale independently. A message broker is the natural coordination mechanism.
+
+### Decision
+
+**Replace the inline polling worker with RabbitMQ-backed job dispatch.**
+
+After a pattern create or update, the service layer writes an `enrichment_jobs` row to PostgreSQL (durable, transactional) and then publishes `{"job_id": "<uuid>"}` to the `enrichment-jobs` queue (best-effort). The `mnemonic-enricher` service consumes the queue and reads job details from PostgreSQL by ID.
+
+Two properties were non-negotiable:
+1. A broker failure must not fail a pattern write — publishing is best-effort; the DB write is the commit point.
+2. Jobs written to PostgreSQL must never be silently lost — the DB row is always the recovery source.
+
+RabbitMQ was chosen over alternatives (Redis Streams, Postgres LISTEN/NOTIFY, SQS) because the existing infrastructure already targets RabbitMQ and the durability semantics (persistent delivery mode, durable queue) match the requirement.
+
+### Consequences
+
+**Positive:**
+
+- `mnemonic-enricher` scales independently of the API server.
+- Pattern writes are never blocked on enrichment throughput.
+- PostgreSQL remains the authoritative record; the queue is a delivery hint, not a source of truth.
+- The `pending` status on an unpublished job is a natural trigger for future recovery tooling.
+
+**Negative:**
+
+- A failed publish leaves the job in `pending` state with no automatic retry. Recovery requires operator intervention or a separate sweep process (not implemented in Phase 2).
+- The broker is a new runtime dependency; API startup fails if RabbitMQ is unavailable at `wireDependencies` time (see ADR-009 for implications).
+- A single AMQP channel is used for all publishes. This is safe under the current sequential, single-service model but will need revisiting if publish concurrency increases (see review finding R-004).
+
+## <a id="adr-009"></a>ADR-009: Best-Effort Publish with PostgreSQL as Recovery Source
+
+**Date:** 2026-03-23
+**Status:** Accepted
+
+### Context
+
+The dual-write sequence in Phase 2 is: (1) write `enrichment_jobs` row to PostgreSQL, (2) publish job ID to RabbitMQ. These two operations cannot be made atomic with standard tooling — PostgreSQL transactions and AMQP channels do not share a two-phase commit coordinator.
+
+Three strategies were considered:
+
+1. **Fail the HTTP request on publish failure.** Consistent from the API's perspective, but undesirable: a transient broker outage would degrade the write API, and the pattern row is already committed.
+2. **Transactional outbox pattern.** A background process reads an outbox table and publishes, guaranteeing at-least-once delivery. Correct, but adds a polling worker — the same complexity Phase 2 is trying to eliminate.
+3. **Best-effort publish with DB as safety net.** Publish after commit; log and ignore errors. Jobs that miss their publish remain `pending` in PostgreSQL and can be swept later.
+
+### Decision
+
+**Publish is best-effort. A failed publish logs a warning and is not propagated to the caller.**
+
+The `patternService.publishJob` method calls `publisher.Publish` and discards errors, logging them as warnings with the job ID. The pattern response is returned to the client regardless of publish outcome.
+
+Recovery relies on the `pending` status in the `enrichment_jobs` table. A future sweep process (not in Phase 2 scope) can query `WHERE status = 'pending' AND created_at < NOW() - INTERVAL '5 minutes'` and republish.
+
+### Consequences
+
+**Positive:**
+
+- Pattern write reliability is independent of broker availability.
+- Recovery path is well-defined: `pending` rows are self-describing and can be swept at any time.
+- No new polling goroutine or outbox table required in Phase 2.
+
+**Negative:**
+
+- Without an active sweep process, stuck `pending` jobs accumulate silently. Operators need alerting on pending job age (not implemented in Phase 2).
+- The reconnect-on-publish path introduces a synchronous `time.Sleep(ReconnectDelay)` (default 5 s) inside the HTTP handler goroutine. Under broker degradation, API write latency spikes by up to 5 s per request. This is bounded by the single-retry design but is a known latency risk.
+- No publisher confirms are used. The broker can accept the message and lose it before routing (e.g., if the exchange has no binding). This is acceptable given the DB safety net, but must be understood by operators.
 
 ## Related Design Docs
 
