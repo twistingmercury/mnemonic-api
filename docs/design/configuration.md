@@ -157,8 +157,8 @@ database:
 openai:
   # API key should be set via MNEMONIC_OPENAI_API_KEY
   api_key: ""
-  embedding_model: text-embedding-3-small
-  embedding_dimensions: 1536
+  embedding_model: text-embedding-3-large
+  embedding_dimensions: 2000
   extraction_model: gpt-4o-mini
   max_requests_per_minute: 500
   retry_attempts: 3
@@ -328,8 +328,8 @@ The otelx package handles the complexity of OpenTelemetry SDK setup, allowing Mn
 | `database.neo4j.max_connection_pool_size`       | int      | `50`                     | `MNEMONIC_DATABASE_NEO4J_MAX_CONNECTION_POOL_SIZE`       | Neo4j max connection pool size                                                              |
 | `database.neo4j.connection_acquisition_timeout` | duration | `60s`                    | `MNEMONIC_DATABASE_NEO4J_CONNECTION_ACQUISITION_TIMEOUT` | Neo4j connection acquisition timeout                                                        |
 | `openai.api_key`                                | string   | `""`                     | `MNEMONIC_OPENAI_API_KEY`                                | OpenAI API key                                                                              |
-| `openai.embedding_model`                        | string   | `text-embedding-3-small` | `MNEMONIC_OPENAI_EMBEDDING_MODEL`                        | Embedding model                                                                             |
-| `openai.embedding_dimensions`                   | int      | `1536`                   | `MNEMONIC_OPENAI_EMBEDDING_DIMENSIONS`                   | Embedding dimensions                                                                        |
+| `openai.embedding_model`                        | string   | `text-embedding-3-large` | `MNEMONIC_OPENAI_EMBEDDING_MODEL`                        | Embedding model                                                                             |
+| `openai.embedding_dimensions`                   | int      | `2000`                   | `MNEMONIC_OPENAI_EMBEDDING_DIMENSIONS`                   | Embedding dimensions                                                                        |
 | `openai.extraction_model`                       | string   | `gpt-4o-mini`            | `MNEMONIC_OPENAI_EXTRACTION_MODEL`                       | Entity extraction model                                                                     |
 | `rate_limit.enabled`                            | bool     | `false`                  | `MNEMONIC_RATE_LIMIT_ENABLED`                            | Enable rate limiting (Post-MVP)                                                             |
 | `rate_limit.requests_per_second`                | int      | `100`                    | `MNEMONIC_RATE_LIMIT_REQUESTS_PER_SECOND`                | Global RPS limit (Post-MVP)                                                                 |
@@ -488,8 +488,8 @@ func setDefaults(v *viper.Viper) {
     v.SetDefault("database.neo4j.connection_acquisition_timeout", "60s")
 
     // OpenAI defaults
-    v.SetDefault("openai.embedding_model", "text-embedding-3-small")
-    v.SetDefault("openai.embedding_dimensions", 1536)
+    v.SetDefault("openai.embedding_model", "text-embedding-3-large")
+    v.SetDefault("openai.embedding_dimensions", 2000)
     v.SetDefault("openai.extraction_model", "gpt-4o-mini")
     v.SetDefault("openai.max_requests_per_minute", 500)
     v.SetDefault("openai.retry_attempts", 3)

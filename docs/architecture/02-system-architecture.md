@@ -107,13 +107,15 @@ graph TB
             NEO[(Neo4j)]
         end
 
-        subgraph "Background Processing"
-            ENRICH[Enrichment Worker]
-        end
+    end
+
+    subgraph "Queue"
+        RMQ[RabbitMQ]
     end
 
     subgraph "External Services"
         OPENAI[OpenAI Embedding API]
+        ENRICHER[mnemonic-enricher]
     end
 
     REST_HANDLER --> REST_VALID
@@ -131,9 +133,9 @@ graph TB
     AGENT <--> PG
     SKILL <--> PG
 
-    ENRICH --> PATTERN
-    ENRICH --> OPENAI
-    PATTERN --> OPENAI
+    PATTERN -->|"publish job"| RMQ
+    ENRICHER -->|"subscribe"| RMQ
+    ENRICHER --> OPENAI
 ```
 
 **What Mnemonic Does NOT Do:**
