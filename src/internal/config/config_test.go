@@ -75,8 +75,6 @@ func TestDefaultValues(t *testing.T) {
 	assert.Equal(t, config.DefaultRateLimitPerUserBurst, cfg.RateLimit.PerUser.BurstSize)
 
 	// Enrichment defaults
-	assert.Equal(t, config.DefaultEnrichmentWorkerCount, cfg.Enrichment.WorkerCount)
-	assert.Equal(t, config.DefaultEnrichmentPollInterval, cfg.Enrichment.PollInterval)
 	assert.Equal(t, config.DefaultEnrichmentMaxAttempts, cfg.Enrichment.MaxAttempts)
 	assert.Equal(t, config.DefaultEnrichmentRetryDelay, cfg.Enrichment.RetryDelay)
 	assert.Equal(t, config.DefaultEnrichmentJobTimeout, cfg.Enrichment.JobTimeout)
@@ -728,20 +726,6 @@ func TestValidation_EnrichmentConfig(t *testing.T) {
 		modify      func(cfg *config.MnemonicConfig)
 		expectError string
 	}{
-		{
-			name: "zero worker_count",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.WorkerCount = 0
-			},
-			expectError: "enrichment.worker_count",
-		},
-		{
-			name: "zero poll_interval",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.PollInterval = 0
-			},
-			expectError: "enrichment.poll_interval",
-		},
 		{
 			name: "zero max_attempts",
 			modify: func(cfg *config.MnemonicConfig) {
@@ -1642,8 +1626,6 @@ func validConfig() *config.MnemonicConfig {
 			},
 		},
 		Enrichment: config.EnrichmentConfig{
-			WorkerCount:            2,
-			PollInterval:           5 * time.Second,
 			MaxAttempts:            3,
 			RetryDelay:             30 * time.Second,
 			JobTimeout:             5 * time.Minute,

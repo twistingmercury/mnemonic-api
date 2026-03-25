@@ -58,11 +58,9 @@ func createTestConfig() *config.MnemonicConfig {
 			},
 		},
 		Enrichment: config.EnrichmentConfig{
-			WorkerCount:  2,
-			PollInterval: 5 * time.Second,
-			MaxAttempts:  3,
-			RetryDelay:   30 * time.Second,
-			JobTimeout:   5 * time.Minute,
+			MaxAttempts: 3,
+			RetryDelay:  30 * time.Second,
+			JobTimeout:  5 * time.Minute,
 		},
 		Logging: config.LoggingConfig{
 			Level:         "info",
