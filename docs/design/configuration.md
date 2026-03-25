@@ -72,7 +72,7 @@ flowchart LR
 
 ### Loading Behavior
 
-Viper's `MergeInConfig()` is NOT used. Configuration is loaded with `ReadInConfig()`, which replaces the entire file layer. Environment variables are bound via `AutomaticEnv()` with prefix replacement, so that `MNEMONIC_SERVER_ADMIN_PORT` maps to the Viper key `server.admin.port`.
+Viper's `MergeInConfig()` is NOT used. Configuration is loaded with `ReadInConfig()`, which replaces the entire file layer. Environment variables are bound via `AutomaticEnv()` with prefix replacement, so that `MNEMONIC_SERVER_PORT` maps to the Viper key `server.port`.
 
 **Merge vs Replace**:
 
@@ -94,38 +94,27 @@ The Mnemonic server reads configuration from YAML files.
 # Mnemonic server configuration file
 # /etc/mnemonic/config.yaml
 
-# HTTP server settings (post-pivot: two listeners)
+# HTTP server settings
 server:
-  # REST Admin API listener
-  admin:
-    host: 0.0.0.0
-    port: 8080
-    read_timeout: 30s
-    write_timeout: 30s
-    idle_timeout: 120s
-    shutdown_timeout: 5s
+  host: 0.0.0.0
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  shutdown_timeout: 5s
 
-    # TLS configuration (optional, typically handled by reverse proxy)
-    tls:
-      enabled: false
-      cert_file: ""
-      key_file: ""
+  # TLS configuration (optional, typically handled by reverse proxy)
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
 
-  # MCP endpoint listener (Streamable HTTP)
-  mcp:
-    host: 0.0.0.0
-    port: 8081
-    read_timeout: 30s
-    write_timeout: 120s # Longer for SSE streaming
-    idle_timeout: 120s
-    shutdown_timeout: 5s
-    session_timeout: 30m # MCP session timeout
-
-    # TLS configuration (optional, typically handled by reverse proxy)
-    tls:
-      enabled: false
-      cert_file: ""
-      key_file: ""
+# MCP endpoint listener
+mcp:
+  port: 8081
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
 
 # Database connections
 database:
@@ -237,12 +226,10 @@ observability:
 All Mnemonic configuration options can be set via environment variables using the `MNEMONIC_` prefix.
 
 ```bash
-# Server (post-pivot: two listeners)
-export MNEMONIC_SERVER_ADMIN_HOST="0.0.0.0"
-export MNEMONIC_SERVER_ADMIN_PORT="8080"
-export MNEMONIC_SERVER_MCP_HOST="0.0.0.0"
-export MNEMONIC_SERVER_MCP_PORT="8081"
-export MNEMONIC_SERVER_MCP_SESSION_TIMEOUT="30m"
+# Server
+export MNEMONIC_SERVER_HOST="0.0.0.0"
+export MNEMONIC_SERVER_PORT="8080"
+export MNEMONIC_MCP_PORT="8081"
 
 # Database credentials (recommended for secrets)
 export MNEMONIC_DATABASE_POSTGRES_PASSWORD="secret"
@@ -293,25 +280,20 @@ The otelx package handles the complexity of OpenTelemetry SDK setup, allowing Mn
 
 | Setting                                         | Type     | Default                  | Environment Variable                                     | Description                                                                                 |
 | ----------------------------------------------- | -------- | ------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `server.admin.host`                             | string   | `0.0.0.0`                | `MNEMONIC_SERVER_ADMIN_HOST`                             | Admin API listen address                                                                    |
-| `server.admin.port`                             | int      | `8080`                   | `MNEMONIC_SERVER_ADMIN_PORT`                             | Admin API listen port                                                                       |
-| `server.admin.read_timeout`                     | duration | `30s`                    | `MNEMONIC_SERVER_ADMIN_READ_TIMEOUT`                     | Admin API read timeout                                                                      |
-| `server.admin.write_timeout`                    | duration | `30s`                    | `MNEMONIC_SERVER_ADMIN_WRITE_TIMEOUT`                    | Admin API write timeout                                                                     |
-| `server.admin.idle_timeout`                     | duration | `120s`                   | `MNEMONIC_SERVER_ADMIN_IDLE_TIMEOUT`                     | Admin API idle timeout                                                                      |
-| `server.admin.shutdown_timeout`                 | duration | `5s`                     | `MNEMONIC_SERVER_ADMIN_SHUTDOWN_TIMEOUT`                 | Admin API graceful shutdown timeout                                                         |
-| `server.admin.tls.enabled`                      | bool     | `false`                  | `MNEMONIC_SERVER_ADMIN_TLS_ENABLED`                      | Enable TLS for Admin API                                                                    |
-| `server.admin.tls.cert_file`                    | string   | `""`                     | `MNEMONIC_SERVER_ADMIN_TLS_CERT_FILE`                    | Admin API TLS certificate path                                                              |
-| `server.admin.tls.key_file`                     | string   | `""`                     | `MNEMONIC_SERVER_ADMIN_TLS_KEY_FILE`                     | Admin API TLS key path                                                                      |
-| `server.mcp.host`                               | string   | `0.0.0.0`                | `MNEMONIC_SERVER_MCP_HOST`                               | MCP endpoint listen address                                                                 |
-| `server.mcp.port`                               | int      | `8081`                   | `MNEMONIC_SERVER_MCP_PORT`                               | MCP endpoint listen port                                                                    |
-| `server.mcp.read_timeout`                       | duration | `30s`                    | `MNEMONIC_SERVER_MCP_READ_TIMEOUT`                       | MCP endpoint read timeout                                                                   |
-| `server.mcp.write_timeout`                      | duration | `120s`                   | `MNEMONIC_SERVER_MCP_WRITE_TIMEOUT`                      | MCP endpoint write timeout (longer for SSE streaming)                                       |
-| `server.mcp.idle_timeout`                       | duration | `120s`                   | `MNEMONIC_SERVER_MCP_IDLE_TIMEOUT`                       | MCP endpoint idle timeout                                                                   |
-| `server.mcp.shutdown_timeout`                   | duration | `5s`                     | `MNEMONIC_SERVER_MCP_SHUTDOWN_TIMEOUT`                   | MCP endpoint graceful shutdown timeout                                                      |
-| `server.mcp.session_timeout`                    | duration | `30m`                    | `MNEMONIC_SERVER_MCP_SESSION_TIMEOUT`                    | MCP session timeout                                                                         |
-| `server.mcp.tls.enabled`                        | bool     | `false`                  | `MNEMONIC_SERVER_MCP_TLS_ENABLED`                        | Enable TLS for MCP endpoint                                                                 |
-| `server.mcp.tls.cert_file`                      | string   | `""`                     | `MNEMONIC_SERVER_MCP_TLS_CERT_FILE`                      | MCP endpoint TLS certificate path                                                           |
-| `server.mcp.tls.key_file`                       | string   | `""`                     | `MNEMONIC_SERVER_MCP_TLS_KEY_FILE`                       | MCP endpoint TLS key path                                                                   |
+| `server.host`                                   | string   | `0.0.0.0`                | `MNEMONIC_SERVER_HOST`                                   | Server listen address                                                                       |
+| `server.port`                                   | int      | `8080`                   | `MNEMONIC_SERVER_PORT`                                   | Server listen port                                                                          |
+| `server.read_timeout`                           | duration | `30s`                    | `MNEMONIC_SERVER_READ_TIMEOUT`                           | Server read timeout                                                                         |
+| `server.write_timeout`                          | duration | `30s`                    | `MNEMONIC_SERVER_WRITE_TIMEOUT`                          | Server write timeout                                                                        |
+| `server.idle_timeout`                           | duration | `120s`                   | `MNEMONIC_SERVER_IDLE_TIMEOUT`                           | Server idle timeout                                                                         |
+| `server.shutdown_timeout`                       | duration | `5s`                     | `MNEMONIC_SERVER_SHUTDOWN_TIMEOUT`                       | Server graceful shutdown timeout                                                            |
+| `server.tls.enabled`                            | bool     | `false`                  | `MNEMONIC_SERVER_TLS_ENABLED`                            | Enable TLS for server                                                                       |
+| `server.tls.cert_file`                          | string   | `""`                     | `MNEMONIC_SERVER_TLS_CERT_FILE`                          | Server TLS certificate path                                                                 |
+| `server.tls.key_file`                           | string   | `""`                     | `MNEMONIC_SERVER_TLS_KEY_FILE`                           | Server TLS key path                                                                         |
+| `mcp.port`                                      | int      | `8081`                   | `MNEMONIC_MCP_PORT`                                      | MCP endpoint listen port                                                                    |
+| `mcp.read_timeout`                              | duration | `30s`                    | `MNEMONIC_MCP_READ_TIMEOUT`                              | MCP endpoint read timeout                                                                   |
+| `mcp.write_timeout`                             | duration | `30s`                    | `MNEMONIC_MCP_WRITE_TIMEOUT`                             | MCP endpoint write timeout                                                                  |
+| `mcp.idle_timeout`                              | duration | `120s`                   | `MNEMONIC_MCP_IDLE_TIMEOUT`                              | MCP endpoint idle timeout                                                                   |
+| `mcp.default_search_threshold`                  | float    | `0.5`                    | `MNEMONIC_MCP_DEFAULT_SEARCH_THRESHOLD`                  | Default similarity threshold for pattern search                                             |
 | `database.postgres.host`                        | string   | `localhost`              | `MNEMONIC_DATABASE_POSTGRES_HOST`                        | PostgreSQL host                                                                             |
 | `database.postgres.port`                        | int      | `5432`                   | `MNEMONIC_DATABASE_POSTGRES_PORT`                        | PostgreSQL port                                                                             |
 | `database.postgres.database`                    | string   | `mnemonic`               | `MNEMONIC_DATABASE_POSTGRES_DATABASE`                    | Database name                                                                               |
@@ -375,8 +357,8 @@ All Mnemonic environment variables use the `MNEMONIC_` prefix with the following
 
 | YAML Path                    | Environment Variable                  |
 | ---------------------------- | ------------------------------------- |
-| `server.admin.port`          | `MNEMONIC_SERVER_ADMIN_PORT`          |
-| `server.mcp.port`            | `MNEMONIC_SERVER_MCP_PORT`            |
+| `server.port`                | `MNEMONIC_SERVER_PORT`                |
+| `mcp.port`                   | `MNEMONIC_MCP_PORT`                   |
 | `database.postgres.password` | `MNEMONIC_DATABASE_POSTGRES_PASSWORD` |
 | `openai.api_key`             | `MNEMONIC_OPENAI_API_KEY`             |
 
@@ -456,20 +438,19 @@ func Load(configPath string) (*MnemonicConfig, error) {
 
 func setDefaults(v *viper.Viper) {
     // Server defaults
-    v.SetDefault("server.admin.host", "0.0.0.0")
-    v.SetDefault("server.admin.port", 8080)
-    v.SetDefault("server.admin.read_timeout", "30s")
-    v.SetDefault("server.admin.write_timeout", "30s")
-    v.SetDefault("server.admin.idle_timeout", "120s")
-    v.SetDefault("server.admin.shutdown_timeout", "5s")
+    v.SetDefault("server.host", "0.0.0.0")
+    v.SetDefault("server.port", 8080)
+    v.SetDefault("server.read_timeout", "30s")
+    v.SetDefault("server.write_timeout", "30s")
+    v.SetDefault("server.idle_timeout", "120s")
+    v.SetDefault("server.shutdown_timeout", "5s")
 
-    v.SetDefault("server.mcp.host", "0.0.0.0")
-    v.SetDefault("server.mcp.port", 8081)
-    v.SetDefault("server.mcp.read_timeout", "30s")
-    v.SetDefault("server.mcp.write_timeout", "120s")
-    v.SetDefault("server.mcp.idle_timeout", "120s")
-    v.SetDefault("server.mcp.shutdown_timeout", "5s")
-    v.SetDefault("server.mcp.session_timeout", "30m")
+    // MCP defaults
+    v.SetDefault("mcp.port", 8081)
+    v.SetDefault("mcp.read_timeout", "30s")
+    v.SetDefault("mcp.write_timeout", "30s")
+    v.SetDefault("mcp.idle_timeout", "120s")
+    v.SetDefault("mcp.default_search_threshold", 0.5)
 
     // Database defaults
     v.SetDefault("database.postgres.host", "localhost")
@@ -526,7 +507,7 @@ func setDefaults(v *viper.Viper) {
 **Key Viper details:**
 
 - `SetEnvPrefix("MNEMONIC")` causes all env var lookups to be prefixed with `MNEMONIC_`
-- `SetEnvKeyReplacer(strings.NewReplacer(".", "_"))` maps nested keys (e.g., `server.admin.port`) to env vars (e.g., `MNEMONIC_SERVER_ADMIN_PORT`)
+- `SetEnvKeyReplacer(strings.NewReplacer(".", "_"))` maps nested keys (e.g., `server.port`) to env vars (e.g., `MNEMONIC_SERVER_PORT`)
 - `AutomaticEnv()` enables automatic binding of all Viper keys to their corresponding env vars
 - `Unmarshal(&cfg)` uses the `mapstructure` library under the hood, so config structs MUST use `mapstructure:"..."` tags (not `yaml` or `json` tags)
 
