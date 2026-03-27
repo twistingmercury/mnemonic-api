@@ -2,5 +2,5 @@
 // Services sit between transport handlers (REST, MCP) and data repositories,
 // orchestrating multi-store writes, enrichment, and error translation.
 //
-// Sub-packages: agent, pattern, skill, skillfile, enrichment, search, openai.
+// Sub-packages: pattern, enrichment, search, openai.
 package service

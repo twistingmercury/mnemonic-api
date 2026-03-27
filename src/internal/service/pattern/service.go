@@ -1,7 +1,7 @@
 // Package pattern provides the business logic layer for pattern lifecycle management.
-// It coordinates between the PostgreSQL pattern, enrichment job, and agent repositories,
-// and the Neo4j graph repository, handling agent name resolution, enrichment job
-// creation, and best-effort graph synchronization.
+// It coordinates between the PostgreSQL pattern, enrichment job repositories,
+// and the Neo4j graph repository, handling enrichment job creation and
+// best-effort graph synchronization.
 package pattern
 
 import (
@@ -14,7 +14,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/repository"
-	agentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/agent"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	enrichmentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
 	graphrepo "github.com/twistingmercury/mnemonic-api/internal/repository/graph"
@@ -23,12 +22,9 @@ import (
 )
 
 // Service defines the operations for managing pattern lifecycle.
-// Agent associations use agent names as the external identifier; the service
-// resolves names to UUIDs internally via the agent repository.
 type Service interface {
 	// Create stores a new pattern in Postgres, creates an enrichment job,
-	// and best-effort syncs agent associations to Neo4j.
-	// Returns service.ErrNotFound if any referenced agent name does not exist.
+	// and best-effort syncs to Neo4j.
 	// Returns service.ErrConflict if the pattern name already exists.
 	Create(ctx context.Context, input CreateInput) (*patternrepo.Pattern, error)
 
@@ -51,18 +47,6 @@ type Service interface {
 	// List retrieves patterns with filtering and pagination.
 	List(ctx context.Context, filter patternrepo.Filter, opts ListOptions) ([]*patternrepo.Pattern, int64, error)
 
-	// SetAgentAssociations replaces all agent associations for a pattern.
-	// Agent names are resolved to UUIDs; returns service.ErrNotFound if any
-	// agent name does not exist.
-	SetAgentAssociations(ctx context.Context, patternID uuid.UUID, associations []AssociationInput) error
-
-	// GetAgentAssociations retrieves all agent associations for a pattern.
-	GetAgentAssociations(ctx context.Context, patternID uuid.UUID) ([]patternrepo.AgentAssociation, error)
-
-	// ResolveAgentNames maps a slice of agent UUIDs to their human-readable
-	// names. Unknown IDs are omitted from the result map without error.
-	ResolveAgentNames(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
-
 	// FindRelated finds patterns related to the given pattern via the Neo4j
 	// knowledge graph. Returns service.ErrNotFound if the pattern does not exist.
 	FindRelated(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPatternResult, error)
@@ -75,36 +59,28 @@ type Service interface {
 
 // CreateInput contains fields for creating a pattern.
 type CreateInput struct {
-	Name              string
-	Description       *string
-	Content           string
-	Tags              []string
-	AgentAssociations []AssociationInput
-	EntityType        string
-	Language          string
-	Domain            string
-	Version           *string
-	RelatedPatterns   []string
+	Name            string
+	Description     *string
+	Content         string
+	Tags            []string
+	EntityType      string
+	Language        string
+	Domain          string
+	Version         *string
+	RelatedPatterns []string
 }
 
 // UpdateInput contains fields for updating a pattern.
 type UpdateInput struct {
-	Name              string
-	Description       *string
-	Content           string
-	Tags              []string
-	AgentAssociations []AssociationInput
-	EntityType        string
-	Language          string
-	Domain            string
-	Version           *string
-	RelatedPatterns   []string
-}
-
-// AssociationInput represents an agent association specified by agent name.
-type AssociationInput struct {
-	AgentName string
-	Relevance float64
+	Name            string
+	Description     *string
+	Content         string
+	Tags            []string
+	EntityType      string
+	Language        string
+	Domain          string
+	Version         *string
+	RelatedPatterns []string
 }
 
 // GraphContext holds the knowledge graph context for a pattern.
@@ -142,7 +118,6 @@ type patternService struct {
 	patternRepo    patternrepo.Repository
 	enrichmentRepo enrichmentrepo.Repository
 	graphRepo      graphrepo.Repository
-	agentRepo      agentrepo.Repository
 	chunkRepo      chunkrepo.Repository
 	pool           repository.TxBeginner
 	publisher      queue.Publisher
@@ -154,7 +129,6 @@ func New(
 	patternRepo patternrepo.Repository,
 	enrichmentRepo enrichmentrepo.Repository,
 	graphRepo graphrepo.Repository,
-	agentRepo agentrepo.Repository,
 	pool repository.TxBeginner,
 	chunkRepo chunkrepo.Repository,
 	publisher queue.Publisher,
@@ -164,7 +138,6 @@ func New(
 		patternRepo:    patternRepo,
 		enrichmentRepo: enrichmentRepo,
 		graphRepo:      graphRepo,
-		agentRepo:      agentRepo,
 		chunkRepo:      chunkRepo,
 		pool:           pool,
 		publisher:      publisher,
@@ -231,15 +204,9 @@ func (s *patternService) publishJob(ctx context.Context, jobID uuid.UUID) {
 	}
 }
 
-// Create stores a new pattern, sets agent associations, creates an enrichment
-// job, and best-effort syncs to Neo4j.
+// Create stores a new pattern, creates an enrichment job, and best-effort
+// syncs to Neo4j.
 func (s *patternService) Create(ctx context.Context, input CreateInput) (*patternrepo.Pattern, error) {
-	// Resolve agent names to UUIDs before any mutations.
-	resolvedAssocs, graphAssocs, err := s.resolveAgentAssociations(ctx, input.AgentAssociations)
-	if err != nil {
-		return nil, err
-	}
-
 	pattern := patternrepo.Pattern{
 		Name:            input.Name,
 		Description:     input.Description,
@@ -257,13 +224,6 @@ func (s *patternService) Create(ctx context.Context, input CreateInput) (*patter
 			return nil, fmt.Errorf("%w: pattern %q", service.ErrConflict, input.Name)
 		}
 		return nil, fmt.Errorf("create pattern: %w", err)
-	}
-
-	// Set agent associations if provided.
-	if len(resolvedAssocs) > 0 {
-		if err := s.patternRepo.SetAgentAssociations(ctx, pattern.ID, resolvedAssocs); err != nil {
-			return nil, fmt.Errorf("create pattern: setting associations: %w", err)
-		}
 	}
 
 	// Split content into chunks and create them.
@@ -301,13 +261,6 @@ func (s *patternService) Create(ctx context.Context, input CreateInput) (*patter
 				Int("total", len(chunks)).
 				Msg("failed to create chunk enrichment jobs — affected chunks will not be embedded until re-PUT")
 		}
-	}
-
-	// Best-effort Neo4j sync for agent associations.
-	if len(graphAssocs) > 0 {
-		s.syncNeo4j("pattern:agent-relevance:"+pattern.ID.String(), func() error {
-			return s.graphRepo.SetPatternAgentRelevance(ctx, pattern.ID, graphAssocs)
-		})
 	}
 
 	return &pattern, nil
@@ -365,12 +318,6 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 		return nil, fmt.Errorf("update pattern: %w", err)
 	}
 
-	// Resolve agent names to UUIDs.
-	resolvedAssocs, graphAssocs, err := s.resolveAgentAssociations(ctx, input.AgentAssociations)
-	if err != nil {
-		return nil, err
-	}
-
 	// Build updated pattern preserving the ID.
 	existing.Name = input.Name
 	existing.Description = input.Description
@@ -382,13 +329,12 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 	existing.Version = input.Version
 	existing.RelatedPatterns = input.RelatedPatterns
 
-	// Perform the four mutating writes (pattern update, agent associations,
-	// delete stale chunks, create new chunks) inside a single Postgres
-	// transaction so a crash between steps cannot leave chunks without
-	// enrichment jobs.
+	// Perform the three mutating writes (pattern update, delete stale chunks,
+	// create new chunks) inside a single Postgres transaction so a crash
+	// between steps cannot leave chunks without enrichment jobs.
 	var newChunks []*chunkrepo.Chunk
 	var txErr error
-	newChunks, txErr = s.updateWithTransaction(ctx, existing, resolvedAssocs)
+	newChunks, txErr = s.updateWithTransaction(ctx, existing)
 	if txErr != nil {
 		return nil, txErr
 	}
@@ -415,22 +361,14 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 			Msg("failed to create chunk enrichment jobs — affected chunks will not be embedded until re-PUT")
 	}
 
-	// Best-effort Neo4j sync for agent associations.
-	if len(graphAssocs) > 0 {
-		s.syncNeo4j("pattern:agent-relevance:"+existing.ID.String(), func() error {
-			return s.graphRepo.SetPatternAgentRelevance(ctx, existing.ID, graphAssocs)
-		})
-	}
-
 	return existing, nil
 }
 
-// updateWithTransaction performs the four mutating writes for the chunk-aware
+// updateWithTransaction performs the three mutating writes for the chunk-aware
 // Update path inside a single Postgres transaction:
 //  1. Update the pattern row.
-//  2. Replace agent associations (when provided).
-//  3. Delete stale chunks (cascades to their enrichment jobs).
-//  4. Insert new chunks.
+//  2. Delete stale chunks (cascades to their enrichment jobs).
+//  3. Insert new chunks.
 //
 // Returns the new chunks so the caller can enqueue enrichment jobs outside
 // the transaction. The transaction is rolled back automatically if any step
@@ -438,7 +376,6 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 func (s *patternService) updateWithTransaction(
 	ctx context.Context,
 	existing *patternrepo.Pattern,
-	resolvedAssocs []patternrepo.AgentAssociation,
 ) ([]*chunkrepo.Chunk, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -447,9 +384,8 @@ func (s *patternService) updateWithTransaction(
 	// Rollback is a no-op after a successful Commit (pgx guarantees this).
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Construct tx-scoped repos so all four writes participate in the same
-	// Postgres transaction. Using the pool-backed repos here would execute
-	// each write on an independent connection and leave tx.Commit a no-op.
+	// Construct tx-scoped repos so all writes participate in the same
+	// Postgres transaction.
 	txPatternRepo := s.patternRepo.WithTx(tx)
 	txChunkRepo := s.chunkRepo.WithTx(tx)
 
@@ -461,19 +397,12 @@ func (s *patternService) updateWithTransaction(
 		return nil, fmt.Errorf("update pattern: %w", err)
 	}
 
-	// Step 2: replace agent associations (conditional).
-	if len(resolvedAssocs) > 0 {
-		if err = txPatternRepo.SetAgentAssociations(ctx, existing.ID, resolvedAssocs); err != nil {
-			return nil, fmt.Errorf("update pattern: setting associations: %w", err)
-		}
-	}
-
-	// Step 3: delete stale chunks (cascades to their enrichment jobs via ON DELETE CASCADE).
+	// Step 2: delete stale chunks (cascades to their enrichment jobs via ON DELETE CASCADE).
 	if err = txChunkRepo.DeleteByPatternID(ctx, existing.ID); err != nil {
 		return nil, fmt.Errorf("update pattern: delete stale chunks: %w", err)
 	}
 
-	// Step 4: re-split and insert new chunks.
+	// Step 3: re-split and insert new chunks.
 	rawChunks := splitIntoChunks(existing.Content)
 	newChunks := make([]*chunkrepo.Chunk, len(rawChunks))
 	for i, rc := range rawChunks {
@@ -530,70 +459,6 @@ func (s *patternService) List(ctx context.Context, filter patternrepo.Filter, op
 	return patterns, total, nil
 }
 
-// SetAgentAssociations replaces all agent associations for a pattern.
-func (s *patternService) SetAgentAssociations(ctx context.Context, patternID uuid.UUID, associations []AssociationInput) error {
-	resolvedAssocs, graphAssocs, err := s.resolveAgentAssociations(ctx, associations)
-	if err != nil {
-		return err
-	}
-
-	if err := s.patternRepo.SetAgentAssociations(ctx, patternID, resolvedAssocs); err != nil {
-		if errors.Is(err, patternrepo.ErrNotFound) {
-			return fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
-		}
-		return fmt.Errorf("set agent associations: %w", err)
-	}
-
-	// Best-effort Neo4j sync.
-	s.syncNeo4j("pattern:agent-relevance:"+patternID.String(), func() error {
-		return s.graphRepo.SetPatternAgentRelevance(ctx, patternID, graphAssocs)
-	})
-
-	return nil
-}
-
-// GetAgentAssociations retrieves all agent associations for a pattern.
-// Returns service.ErrNotFound if the pattern does not exist.
-func (s *patternService) GetAgentAssociations(ctx context.Context, patternID uuid.UUID) ([]patternrepo.AgentAssociation, error) {
-	if _, err := s.patternRepo.Get(ctx, patternID); err != nil {
-		if errors.Is(err, patternrepo.ErrNotFound) {
-			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
-		}
-		return nil, fmt.Errorf("get agent associations: %w", err)
-	}
-
-	assocs, err := s.patternRepo.GetAgentAssociations(ctx, patternID)
-	if err != nil {
-		return nil, fmt.Errorf("get agent associations: %w", err)
-	}
-	return assocs, nil
-}
-
-// ResolveAgentNames maps agent UUIDs to their human-readable names.
-// Unknown IDs are silently omitted from the returned map.
-func (s *patternService) ResolveAgentNames(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
-	if len(ids) == 0 {
-		return map[uuid.UUID]string{}, nil
-	}
-
-	names := make(map[uuid.UUID]string, len(ids))
-	for _, id := range ids {
-		agent, err := s.agentRepo.GetByID(ctx, id)
-		if err != nil {
-			if errors.Is(err, agentrepo.ErrNotFound) {
-				s.logger.Warn().
-					Str("agent_id", id.String()).
-					Msg("agent not found during name resolution, omitting")
-				continue
-			}
-			return nil, fmt.Errorf("resolving agent %s: %w", id, err)
-		}
-		names[id] = agent.Name
-	}
-
-	return names, nil
-}
-
 // FindRelated finds patterns related to the given pattern via the knowledge graph.
 func (s *patternService) FindRelated(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPatternResult, error) {
 	// Verify pattern exists.
@@ -639,42 +504,6 @@ func (s *patternService) ListChunks(ctx context.Context, patternID uuid.UUID) ([
 		return nil, fmt.Errorf("list chunks: %w", err)
 	}
 	return chunks, nil
-}
-
-// resolveAgentAssociations converts agent names to UUIDs and builds both the
-// Postgres and Neo4j association slices. Returns service.ErrNotFound if any
-// agent name cannot be resolved.
-func (s *patternService) resolveAgentAssociations(
-	ctx context.Context,
-	inputs []AssociationInput,
-) ([]patternrepo.AgentAssociation, []graphrepo.AgentAssociation, error) {
-	if len(inputs) == 0 {
-		return nil, nil, nil
-	}
-
-	pgAssocs := make([]patternrepo.AgentAssociation, len(inputs))
-	graphAssocs := make([]graphrepo.AgentAssociation, len(inputs))
-
-	for i, input := range inputs {
-		agent, err := s.agentRepo.Get(ctx, input.AgentName)
-		if err != nil {
-			if errors.Is(err, agentrepo.ErrNotFound) {
-				return nil, nil, fmt.Errorf("%w: agent %q", service.ErrNotFound, input.AgentName)
-			}
-			return nil, nil, fmt.Errorf("resolving agent %q: %w", input.AgentName, err)
-		}
-
-		pgAssocs[i] = patternrepo.AgentAssociation{
-			AgentID:   agent.ID,
-			Relevance: input.Relevance,
-		}
-		graphAssocs[i] = graphrepo.AgentAssociation{
-			AgentName: input.AgentName,
-			Relevance: input.Relevance,
-		}
-	}
-
-	return pgAssocs, graphAssocs, nil
 }
 
 // fetchGraphContext retrieves related patterns and concepts from Neo4j.

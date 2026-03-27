@@ -38,7 +38,7 @@ services:
 
   dev_mcp:
     image: ghcr.io/twistingmercury/mnemonic:latest-dev
-    pull_policy: always
+    pull_policy: never
     restart: unless-stopped
     ports:
       - "8090:8080"

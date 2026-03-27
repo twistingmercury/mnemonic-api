@@ -1,4 +1,4 @@
-.PHONY: local build analyze tests-db tests-db-agent tests-db-pattern tests-db-graph tests-unit tests-bench docs-swagger start stop help
+.PHONY: local build analyze tests-db tests-db-pattern tests-db-graph tests-unit tests-bench docs-swagger start stop help
 
 GIT_COMMIT := $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 GIT_TAG    := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
@@ -15,10 +15,7 @@ analyze: ## Run linters, formatters, security scanners, etc
 	cd src && govulncheck ./cmd/... ./internal/...
 	cd src && gosec -quiet -exclude-dir=tests ./...
 
-tests-db: tests-db-agent tests-db-pattern tests-db-graph ## Run all database integration tests
-
-tests-db-agent: ## Run agent repository integration tests
-	cd src && ./internal/repository/tests/run-agent-integration-tests.sh
+tests-db: tests-db-pattern tests-db-graph ## Run all database integration tests
 
 tests-db-pattern: ## Run pattern repository integration tests
 	cd src && ./internal/repository/tests/run-pattern-integration-tests.sh

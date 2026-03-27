@@ -22,8 +22,6 @@ import (
 //   GET    /v1/api/patterns/{id}         Get pattern by ID (full content + graph)
 //   PUT    /v1/api/patterns/{id}         Update pattern (full replacement)
 //   DELETE /v1/api/patterns/{id}         Delete pattern
-//   GET    /v1/api/patterns/{id}/agents  Get agent associations
-//   PUT    /v1/api/patterns/{id}/agents  Set agent associations
 //
 // Pattern resource:
 //   - id: UUID (server-generated)
@@ -31,7 +29,6 @@ import (
 //   - description: Optional (max 500 chars)
 //   - content: Markdown (1-10240 bytes)
 //   - tags: Optional (max 20 items)
-//   - agent_associations: Links to agents with relevance scores
 //   - enrichment_status: pending | enriched | failed (async processing)
 //
 // Create returns 202 Accepted because enrichment (embedding generation,
@@ -617,38 +614,17 @@ func TestCreatePattern_MinimalFieldsOnlyNameAndContent(t *testing.T) {
 	}
 }
 
-func TestCreatePattern_AllFieldsIncludingDescriptionTagsAssociations(t *testing.T) {
+func TestCreatePattern_AllFieldsIncludingDescriptionAndTags(t *testing.T) {
 	client := helpers.NewTestClient(t)
-
-	// Create an agent first so we have a valid agent_id
-	agentName := helpers.GenerateUniqueName("agent")
-	agentBody := helpers.AgentCreate{
-		Name:         agentName,
-		SystemPrompt: "You are a test agent",
-		Model:        "sonnet",
-		Description:  "Test agent.",
-		Version:      "1.0.0",
-	}
-	agentResp, err := client.Post("/v1/api/agents", agentBody)
-	if err != nil {
-		t.Fatalf("failed to create agent: %v", err)
-	}
-	agentResp.Body.Close()
-	if agentResp.StatusCode != http.StatusCreated {
-		t.Fatalf("expected 201 creating agent, got %d", agentResp.StatusCode)
-	}
 
 	body := helpers.PatternCreate{
 		Name:        helpers.GenerateUniqueName("pattern"),
 		Description: "test description",
 		Content:     "# Full Pattern\n\nAll fields populated.",
 		Tags:        []string{"go", "testing"},
-		AgentAssociations: []helpers.AgentAssociation{
-			{AgentName: agentName, Relevance: 0.9},
-		},
-		EntityType: "go-pattern",
-		Language:   "go",
-		Domain:     "backend",
+		EntityType:  "go-pattern",
+		Language:    "go",
+		Domain:      "backend",
 	}
 
 	resp, err := client.Post("/v1/api/patterns", body)
@@ -668,12 +644,6 @@ func TestCreatePattern_AllFieldsIncludingDescriptionTagsAssociations(t *testing.
 	}
 	if len(pattern.Tags) != 2 {
 		t.Fatalf("expected 2 tags, got %d", len(pattern.Tags))
-	}
-	if len(pattern.AgentAssociations) != 1 {
-		t.Fatalf("expected 1 agent association, got %d", len(pattern.AgentAssociations))
-	}
-	if pattern.AgentAssociations[0].AgentName != agentName {
-		t.Fatalf("expected agent_name %q, got %q", agentName, pattern.AgentAssociations[0].AgentName)
 	}
 }
 
@@ -826,68 +796,6 @@ func TestCreatePattern_ValidationErrors(t *testing.T) {
 			_ = tc.expectField
 		})
 	}
-}
-
-func TestCreatePattern_InvalidAgentAssociation(t *testing.T) {
-	t.Run("non-existent agent name", func(t *testing.T) {
-		client := helpers.NewTestClient(t)
-
-		body := helpers.PatternCreate{
-			Name:    helpers.GenerateUniqueName("pattern"),
-			Content: "content with non-existent agent",
-			AgentAssociations: []helpers.AgentAssociation{
-				{AgentName: "definitely-does-not-exist", Relevance: 0.5},
-			},
-		}
-
-		resp, err := client.Post("/v1/api/patterns", body)
-		if err != nil {
-			t.Fatalf("failed to POST /v1/api/patterns: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode < 400 || resp.StatusCode >= 500 {
-			t.Fatalf("expected 4xx status for non-existent agent, got %d", resp.StatusCode)
-		}
-	})
-	t.Run("relevance below zero", func(t *testing.T) {
-		client := helpers.NewTestClient(t)
-
-		body := helpers.PatternCreate{
-			Name:    helpers.GenerateUniqueName("pattern"),
-			Content: "content with invalid relevance",
-			AgentAssociations: []helpers.AgentAssociation{
-				{AgentName: "some-agent", Relevance: -0.1},
-			},
-		}
-
-		resp, err := client.Post("/v1/api/patterns", body)
-		if err != nil {
-			t.Fatalf("failed to POST /v1/api/patterns: %v", err)
-		}
-		defer resp.Body.Close()
-
-		helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
-	})
-	t.Run("relevance above one", func(t *testing.T) {
-		client := helpers.NewTestClient(t)
-
-		body := helpers.PatternCreate{
-			Name:    helpers.GenerateUniqueName("pattern"),
-			Content: "content with relevance above one",
-			AgentAssociations: []helpers.AgentAssociation{
-				{AgentName: "some-agent", Relevance: 1.1},
-			},
-		}
-
-		resp, err := client.Post("/v1/api/patterns", body)
-		if err != nil {
-			t.Fatalf("failed to POST /v1/api/patterns: %v", err)
-		}
-		defer resp.Body.Close()
-
-		helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
-	})
 }
 
 func TestCreatePattern_InvalidJSONReturns400(t *testing.T) {
@@ -1111,30 +1019,6 @@ func TestSearchPatterns_FilterByTags(t *testing.T) {
 	resp, err := client.Get("/v1/api/patterns/search?q=tag+filtered+search&tags=go,errors")
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search?tags=...: %v", err)
-	}
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
-	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
-
-	// Verify response structure is valid (no enriched patterns expected)
-	if searchResp.Results == nil {
-		t.Fatal("expected results field to be present")
-	}
-}
-
-func TestSearchPatterns_FilterByAgent(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	resp, err := client.Get("/v1/api/patterns/search?q=agent+filtered+search&agent=go-software-engineer")
-	if err != nil {
-		t.Fatalf("failed to GET /v1/api/patterns/search?agent=...: %v", err)
 	}
 
 	if resp.StatusCode == http.StatusServiceUnavailable {
@@ -1866,425 +1750,6 @@ func TestDeletePattern_InvalidUUIDReturns400(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// Get Agent Associations (GET /v1/api/patterns/{id}/agents)
-// -----------------------------------------------------------------------------
-
-func TestGetPatternAgentAssociations_ReturnsAssociations(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	// Create an agent first
-	agentName := helpers.GenerateUniqueName("agent")
-	agentBody := helpers.AgentCreate{
-		Name:         agentName,
-		SystemPrompt: "You are a test agent for associations",
-		Model:        "sonnet",
-		Description:  "Test agent.",
-		Version:      "1.0.0",
-	}
-	agentResp, err := client.Post("/v1/api/agents", agentBody)
-	if err != nil {
-		t.Fatalf("failed to create agent: %v", err)
-	}
-	agentResp.Body.Close()
-	if agentResp.StatusCode != http.StatusCreated {
-		t.Fatalf("expected 201 creating agent, got %d", agentResp.StatusCode)
-	}
-
-	// Create pattern with agent association
-	patternBody := helpers.PatternCreate{
-		Name:    helpers.GenerateUniqueName("pattern"),
-		Content: "content for agent associations test",
-		AgentAssociations: []helpers.AgentAssociation{
-			{AgentName: agentName, Relevance: 0.85},
-		},
-		EntityType: "go-pattern",
-		Language:   "go",
-		Domain:     "backend",
-	}
-	createResp, err := client.Post("/v1/api/patterns", patternBody)
-	if err != nil {
-		t.Fatalf("failed to create pattern: %v", err)
-	}
-	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-	resp, err := client.Get(patternAgentsPath(created.ID))
-	if err != nil {
-		t.Fatalf("failed to GET %s: %v", patternAgentsPath(created.ID), err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
-	associations := helpers.ParseJSON[helpers.PatternAgentAssociations](t, resp)
-
-	if len(associations.Associations) != 1 {
-		t.Fatalf("expected 1 association, got %d", len(associations.Associations))
-	}
-	if associations.Associations[0].AgentName != agentName {
-		t.Fatalf("expected agent_name %q, got %q", agentName, associations.Associations[0].AgentName)
-	}
-}
-
-func TestGetPatternAgentAssociations_EmptyListWhenNoAssociations(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	body := helpers.PatternCreate{
-		Name:       helpers.GenerateUniqueName("pattern"),
-		Content:    "content with no agent associations",
-		EntityType: "go-pattern",
-		Language:   "go",
-		Domain:     "backend",
-	}
-	createResp, err := client.Post("/v1/api/patterns", body)
-	if err != nil {
-		t.Fatalf("failed to create pattern: %v", err)
-	}
-	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-	resp, err := client.Get(patternAgentsPath(created.ID))
-	if err != nil {
-		t.Fatalf("failed to GET %s: %v", patternAgentsPath(created.ID), err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
-	associations := helpers.ParseJSON[helpers.PatternAgentAssociations](t, resp)
-
-	if len(associations.Associations) != 0 {
-		t.Fatalf("expected 0 associations, got %d", len(associations.Associations))
-	}
-}
-
-func TestGetPatternAgentAssociations_PatternNotFoundReturns404(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	nonExistentID := uuid.New().String()
-	resp, err := client.Get(patternAgentsPath(nonExistentID))
-	if err != nil {
-		t.Fatalf("failed to GET %s: %v", patternAgentsPath(nonExistentID), err)
-	}
-	defer resp.Body.Close()
-
-	helpers.AssertStatusCode(t, resp, http.StatusNotFound)
-}
-
-func TestGetPatternAgentAssociations_InvalidUUIDReturns400(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	resp, err := client.Get("/v1/api/patterns/not-a-valid-uuid/agents")
-	if err != nil {
-		t.Fatalf("failed to GET /v1/api/patterns/not-a-valid-uuid/agents: %v", err)
-	}
-	defer resp.Body.Close()
-
-	helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
-}
-
-func TestGetPatternAgentAssociations_ResponseIncludesRequestIDHeader(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	body := helpers.PatternCreate{
-		Name:       helpers.GenerateUniqueName("pattern"),
-		Content:    "content for request id header on agents endpoint",
-		EntityType: "go-pattern",
-		Language:   "go",
-		Domain:     "backend",
-	}
-	createResp, err := client.Post("/v1/api/patterns", body)
-	if err != nil {
-		t.Fatalf("failed to create pattern: %v", err)
-	}
-	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-	resp, err := client.Get(patternAgentsPath(created.ID))
-	if err != nil {
-		t.Fatalf("failed to GET %s: %v", patternAgentsPath(created.ID), err)
-	}
-	defer resp.Body.Close()
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-	helpers.AssertRequestIDHeader(t, resp)
-}
-
-// -----------------------------------------------------------------------------
-// Set Agent Associations (PUT /v1/api/patterns/{id}/agents)
-// -----------------------------------------------------------------------------
-
-func TestSetPatternAgentAssociations_ReplacesAllAssociations(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	// Create two agents
-	agentA := helpers.GenerateUniqueName("agent")
-	agentB := helpers.GenerateUniqueName("agent")
-
-	for _, name := range []string{agentA, agentB} {
-		agentBody := helpers.AgentCreate{
-			Name:         name,
-			SystemPrompt: "You are a test agent",
-			Model:        "sonnet",
-			Description:  "Test agent.",
-			Version:      "1.0.0",
-		}
-		agentResp, err := client.Post("/v1/api/agents", agentBody)
-		if err != nil {
-			t.Fatalf("failed to create agent %q: %v", name, err)
-		}
-		agentResp.Body.Close()
-		if agentResp.StatusCode != http.StatusCreated {
-			t.Fatalf("expected 201 creating agent %q, got %d", name, agentResp.StatusCode)
-		}
-	}
-
-	// Create pattern with agentA
-	patternBody := helpers.PatternCreate{
-		Name:    helpers.GenerateUniqueName("pattern"),
-		Content: "content for replace associations test",
-		AgentAssociations: []helpers.AgentAssociation{
-			{AgentName: agentA, Relevance: 0.7},
-		},
-		EntityType: "go-pattern",
-		Language:   "go",
-		Domain:     "backend",
-	}
-	createResp, err := client.Post("/v1/api/patterns", patternBody)
-	if err != nil {
-		t.Fatalf("failed to create pattern: %v", err)
-	}
-	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-	// Replace with agentB only
-	newAssociations := helpers.PatternAgentAssociations{
-		Associations: []helpers.AgentAssociation{
-			{AgentName: agentB, Relevance: 0.9},
-		},
-	}
-
-	resp, err := client.Put(patternAgentsPath(created.ID), newAssociations)
-	if err != nil {
-		t.Fatalf("failed to PUT %s: %v", patternAgentsPath(created.ID), err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusNoContent)
-	helpers.ReadBody(t, resp)
-}
-
-func TestSetPatternAgentAssociations_ClearAssociationsWithEmptyArray(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	// Create an agent first
-	agentName := helpers.GenerateUniqueName("agent")
-	agentBody := helpers.AgentCreate{
-		Name:         agentName,
-		SystemPrompt: "You are a test agent",
-		Model:        "sonnet",
-		Description:  "Test agent.",
-		Version:      "1.0.0",
-	}
-	agentResp, err := client.Post("/v1/api/agents", agentBody)
-	if err != nil {
-		t.Fatalf("failed to create agent: %v", err)
-	}
-	agentResp.Body.Close()
-
-	// Create pattern with one association
-	patternBody := helpers.PatternCreate{
-		Name:    helpers.GenerateUniqueName("pattern"),
-		Content: "content for clear associations test",
-		AgentAssociations: []helpers.AgentAssociation{
-			{AgentName: agentName, Relevance: 0.75},
-		},
-		EntityType: "go-pattern",
-		Language:   "go",
-		Domain:     "backend",
-	}
-	createResp, err := client.Post("/v1/api/patterns", patternBody)
-	if err != nil {
-		t.Fatalf("failed to create pattern: %v", err)
-	}
-	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-	// Clear associations with empty array
-	clearBody := helpers.PatternAgentAssociations{
-		Associations: []helpers.AgentAssociation{},
-	}
-
-	resp, err := client.Put(patternAgentsPath(created.ID), clearBody)
-	if err != nil {
-		t.Fatalf("failed to PUT %s: %v", patternAgentsPath(created.ID), err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusNoContent)
-	helpers.ReadBody(t, resp)
-}
-
-func TestSetPatternAgentAssociations_PatternNotFoundReturns404(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	nonExistentID := uuid.New().String()
-	body := helpers.PatternAgentAssociations{
-		Associations: []helpers.AgentAssociation{},
-	}
-
-	resp, err := client.Put(patternAgentsPath(nonExistentID), body)
-	if err != nil {
-		t.Fatalf("failed to PUT %s: %v", patternAgentsPath(nonExistentID), err)
-	}
-	defer resp.Body.Close()
-
-	helpers.AssertStatusCode(t, resp, http.StatusNotFound)
-}
-
-func TestSetPatternAgentAssociations_ValidationErrors(t *testing.T) {
-	t.Run("non-existent agent name", func(t *testing.T) {
-		client := helpers.NewTestClient(t)
-
-		// Create a pattern to PUT against
-		patternBody := helpers.PatternCreate{
-			Name:       helpers.GenerateUniqueName("pattern"),
-			Content:    "content for non-existent agent validation",
-			EntityType: "go-pattern",
-			Language:   "go",
-			Domain:     "backend",
-		}
-		createResp, err := client.Post("/v1/api/patterns", patternBody)
-		if err != nil {
-			t.Fatalf("failed to create pattern: %v", err)
-		}
-		helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-		created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-		body := helpers.PatternAgentAssociations{
-			Associations: []helpers.AgentAssociation{
-				{AgentName: "definitely-does-not-exist", Relevance: 0.5},
-			},
-		}
-
-		resp, err := client.Put(patternAgentsPath(created.ID), body)
-		if err != nil {
-			t.Fatalf("failed to PUT %s: %v", patternAgentsPath(created.ID), err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode < 400 || resp.StatusCode >= 500 {
-			t.Fatalf("expected 4xx for non-existent agent, got %d", resp.StatusCode)
-		}
-	})
-	t.Run("relevance below zero", func(t *testing.T) {
-		client := helpers.NewTestClient(t)
-
-		patternBody := helpers.PatternCreate{
-			Name:       helpers.GenerateUniqueName("pattern"),
-			Content:    "content for relevance below zero validation",
-			EntityType: "go-pattern",
-			Language:   "go",
-			Domain:     "backend",
-		}
-		createResp, err := client.Post("/v1/api/patterns", patternBody)
-		if err != nil {
-			t.Fatalf("failed to create pattern: %v", err)
-		}
-		helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-		created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-		body := helpers.PatternAgentAssociations{
-			Associations: []helpers.AgentAssociation{
-				{AgentName: "some-agent", Relevance: -0.1},
-			},
-		}
-
-		resp, err := client.Put(patternAgentsPath(created.ID), body)
-		if err != nil {
-			t.Fatalf("failed to PUT %s: %v", patternAgentsPath(created.ID), err)
-		}
-		defer resp.Body.Close()
-
-		helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
-	})
-	t.Run("relevance above one", func(t *testing.T) {
-		client := helpers.NewTestClient(t)
-
-		patternBody := helpers.PatternCreate{
-			Name:       helpers.GenerateUniqueName("pattern"),
-			Content:    "content for relevance above one validation",
-			EntityType: "go-pattern",
-			Language:   "go",
-			Domain:     "backend",
-		}
-		createResp, err := client.Post("/v1/api/patterns", patternBody)
-		if err != nil {
-			t.Fatalf("failed to create pattern: %v", err)
-		}
-		helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-		created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-		body := helpers.PatternAgentAssociations{
-			Associations: []helpers.AgentAssociation{
-				{AgentName: "some-agent", Relevance: 1.1},
-			},
-		}
-
-		resp, err := client.Put(patternAgentsPath(created.ID), body)
-		if err != nil {
-			t.Fatalf("failed to PUT %s: %v", patternAgentsPath(created.ID), err)
-		}
-		defer resp.Body.Close()
-
-		helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
-	})
-	t.Run("missing associations field", func(t *testing.T) {
-		client := helpers.NewTestClient(t)
-
-		patternBody := helpers.PatternCreate{
-			Name:       helpers.GenerateUniqueName("pattern"),
-			Content:    "content for missing associations field validation",
-			EntityType: "go-pattern",
-			Language:   "go",
-			Domain:     "backend",
-		}
-		createResp, err := client.Post("/v1/api/patterns", patternBody)
-		if err != nil {
-			t.Fatalf("failed to create pattern: %v", err)
-		}
-		helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-		created := helpers.ParseJSON[helpers.Pattern](t, createResp)
-
-		// Send empty JSON object — no "associations" field
-		req, err := http.NewRequest(http.MethodPut, client.BaseURL+patternAgentsPath(created.ID), strings.NewReader(`{}`))
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("failed to PUT %s: %v", patternAgentsPath(created.ID), err)
-		}
-		defer resp.Body.Close()
-
-		helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
-	})
-}
-
-func TestSetPatternAgentAssociations_InvalidUUIDReturns400(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	body := helpers.PatternAgentAssociations{
-		Associations: []helpers.AgentAssociation{},
-	}
-
-	resp, err := client.Put("/v1/api/patterns/not-a-valid-uuid/agents", body)
-	if err != nil {
-		t.Fatalf("failed to PUT /v1/api/patterns/not-a-valid-uuid/agents: %v", err)
-	}
-	defer resp.Body.Close()
-
-	helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
-}
-
-// -----------------------------------------------------------------------------
 // Pattern Enrichment (cross-cutting async behavior)
 // -----------------------------------------------------------------------------
 
@@ -2515,11 +1980,6 @@ func patternPath(id string) string {
 	return fmt.Sprintf("/v1/api/patterns/%s", id)
 }
 
-// patternAgentsPath returns the API path for a pattern's agent associations.
-func patternAgentsPath(id string) string {
-	return fmt.Sprintf("/v1/api/patterns/%s/agents", id)
-}
-
 // Compile-time interface assertions to ensure test types from types.go are used.
 // These prevent the types from appearing unused if no test body references them yet.
 var (
@@ -2527,7 +1987,6 @@ var (
 	_ = helpers.PatternUpdate{}
 	_ = helpers.PatternList{}
 	_ = helpers.PatternSearchResponse{}
-	_ = helpers.PatternAgentAssociations{}
 	_ = helpers.Pattern{}
 	_ = helpers.ErrorResponse{}
 	_ = helpers.ChunkListResponse{}

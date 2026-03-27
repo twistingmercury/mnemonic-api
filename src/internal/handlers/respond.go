@@ -1,6 +1,6 @@
 // Package handlers provides shared utilities for REST handler packages.
-// Sub-packages under handlers implement the actual endpoint logic for agents,
-// patterns, skills, skill files, and search.
+// Sub-packages under handlers implement the actual endpoint logic for
+// patterns and search.
 //
 // Documentation:
 //   - API: docs/api/openapi/mnemonic-v1.yaml
@@ -27,8 +27,8 @@ type ProblemDetail struct {
 	Type     string       `json:"type"             example:"https://mnemonic.example.com/problems/not-found"`
 	Title    string       `json:"title"            example:"Not Found"`
 	Status   int          `json:"status"           example:"404"`
-	Detail   string       `json:"detail,omitempty" example:"agent not found"`
-	Instance string       `json:"instance,omitempty" example:"/v1/api/agents/my-agent"`
+	Detail   string       `json:"detail,omitempty" example:"pattern not found"`
+	Instance string       `json:"instance,omitempty" example:"/v1/api/patterns/my-pattern"`
 	TraceID  string       `json:"traceId,omitempty"  example:"trace-abc123"`
 	Errors   []FieldError `json:"errors,omitempty"`
 }

@@ -1,6 +1,6 @@
 // Package handlers provides shared utilities and the parent package for
 // Mnemonic's HTTP handler groups. Sub-packages implement endpoint logic
-// for agents, patterns, skills, skill files, and operational endpoints.
+// for patterns and operational endpoints.
 //
 // This package contains shared types and utilities used by all handler
 // sub-packages: RFC 7807 error responses, cursor-based pagination,
