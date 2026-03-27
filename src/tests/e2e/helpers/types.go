@@ -81,62 +81,52 @@ type AgentList struct {
 	Pagination Pagination     `json:"pagination"`
 }
 
-// AgentAssociation represents association between pattern and agent.
-// OpenAPI: api/openapi/mnemonic-v1.yaml:529 (AgentAssociation)
-type AgentAssociation struct {
-	AgentName string  `json:"agent_name"`
-	Relevance float64 `json:"relevance"`
-}
-
 // Pattern represents the full pattern definition.
 // OpenAPI: api/openapi/mnemonic-v1.yaml:550 (Pattern)
 type Pattern struct {
-	ID                string             `json:"id,omitempty"`
-	Name              string             `json:"name"`
-	Description       string             `json:"description,omitempty"`
-	Content           string             `json:"content"`
-	Tags              []string           `json:"tags,omitempty"`
-	AgentAssociations []AgentAssociation `json:"agent_associations,omitempty"`
-	CreatedAt         string             `json:"created_at,omitempty"`
-	UpdatedAt         string             `json:"updated_at,omitempty"`
-	EnrichmentStatus  string             `json:"enrichment_status,omitempty"`
-	EnrichmentError   string             `json:"enrichment_error,omitempty"`
-	EnrichedAt        string             `json:"enriched_at,omitempty"`
-	EntityType        string             `json:"entity_type,omitempty"`
-	Language          string             `json:"language,omitempty"`
-	Domain            string             `json:"domain,omitempty"`
-	Version           string             `json:"version,omitempty"`
-	RelatedPatterns   []string           `json:"related_patterns,omitempty"`
+	ID               string   `json:"id,omitempty"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	Content          string   `json:"content"`
+	Tags             []string `json:"tags,omitempty"`
+	CreatedAt        string   `json:"created_at,omitempty"`
+	UpdatedAt        string   `json:"updated_at,omitempty"`
+	EnrichmentStatus string   `json:"enrichment_status,omitempty"`
+	EnrichmentError  string   `json:"enrichment_error,omitempty"`
+	EnrichedAt       string   `json:"enriched_at,omitempty"`
+	EntityType       string   `json:"entity_type,omitempty"`
+	Language         string   `json:"language,omitempty"`
+	Domain           string   `json:"domain,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	RelatedPatterns  []string `json:"related_patterns,omitempty"`
 }
 
 // PatternCreate represents request body for creating a new pattern.
 // OpenAPI: api/openapi/mnemonic-v1.yaml:644 (PatternCreate)
 type PatternCreate struct {
-	Name              string             `json:"name"`
-	Description       string             `json:"description,omitempty"`
-	Content           string             `json:"content"`
-	Tags              []string           `json:"tags,omitempty"`
-	AgentAssociations []AgentAssociation `json:"agent_associations,omitempty"`
-	EntityType        string             `json:"entity_type,omitempty"`
-	Language          string             `json:"language,omitempty"`
-	Domain            string             `json:"domain,omitempty"`
-	Version           string             `json:"version,omitempty"`
-	RelatedPatterns   []string           `json:"related_patterns,omitempty"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description,omitempty"`
+	Content         string   `json:"content"`
+	Tags            []string `json:"tags,omitempty"`
+	EntityType      string   `json:"entity_type,omitempty"`
+	Language        string   `json:"language,omitempty"`
+	Domain          string   `json:"domain,omitempty"`
+	Version         string   `json:"version,omitempty"`
+	RelatedPatterns []string `json:"related_patterns,omitempty"`
 }
 
 // PatternUpdate represents request body for updating a pattern.
 // OpenAPI: api/openapi/mnemonic-v1.yaml:683 (PatternUpdate)
 type PatternUpdate struct {
-	Name              string             `json:"name"`
-	Description       string             `json:"description,omitempty"`
-	Content           string             `json:"content"`
-	Tags              []string           `json:"tags,omitempty"`
-	AgentAssociations []AgentAssociation `json:"agent_associations,omitempty"`
-	EntityType        string             `json:"entity_type,omitempty"`
-	Language          string             `json:"language,omitempty"`
-	Domain            string             `json:"domain,omitempty"`
-	Version           string             `json:"version,omitempty"`
-	RelatedPatterns   []string           `json:"related_patterns,omitempty"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description,omitempty"`
+	Content         string   `json:"content"`
+	Tags            []string `json:"tags,omitempty"`
+	EntityType      string   `json:"entity_type,omitempty"`
+	Language        string   `json:"language,omitempty"`
+	Domain          string   `json:"domain,omitempty"`
+	Version         string   `json:"version,omitempty"`
+	RelatedPatterns []string `json:"related_patterns,omitempty"`
 }
 
 // PatternSummary represents pattern summary without content.
@@ -197,12 +187,6 @@ type ChunkSummary struct {
 type ChunkListResponse struct {
 	Chunks []ChunkSummary `json:"chunks"`
 	Count  int            `json:"count"`
-}
-
-// PatternAgentAssociations represents the request/response for pattern-agent associations.
-// OpenAPI: api/openapi/mnemonic-v1.yaml:768 (PatternAgentAssociations)
-type PatternAgentAssociations struct {
-	Associations []AgentAssociation `json:"associations"`
 }
 
 // Skill represents the full skill definition.
