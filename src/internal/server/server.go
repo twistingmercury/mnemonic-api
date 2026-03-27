@@ -24,19 +24,13 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
-	agentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/agent"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	enrichmentjobrepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
 	graphrepo "github.com/twistingmercury/mnemonic-api/internal/repository/graph"
 	patternrepo "github.com/twistingmercury/mnemonic-api/internal/repository/pattern"
-	skillrepo "github.com/twistingmercury/mnemonic-api/internal/repository/skill"
-	skillfilerepo "github.com/twistingmercury/mnemonic-api/internal/repository/skillfile"
-	agentsvc "github.com/twistingmercury/mnemonic-api/internal/service/agent"
 	openaisvc "github.com/twistingmercury/mnemonic-api/internal/service/openai"
 	patternsvc "github.com/twistingmercury/mnemonic-api/internal/service/pattern"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
-	skillsvc "github.com/twistingmercury/mnemonic-api/internal/service/skill"
-	skillfilesvc "github.com/twistingmercury/mnemonic-api/internal/service/skillfile"
 	"github.com/twistingmercury/mnemonic-api/internal/telemetry"
 	otelxgin "github.com/twistingmercury/otelx/middleware/gin"
 )
@@ -185,10 +179,7 @@ func wireDependencies(
 	meter metric.Meter,
 ) (Services, mcpserver.ToolDependencies, queue.Publisher, error) {
 	// Repositories.
-	agentRepo := agentrepo.NewRepository(pgPool)
 	patternRepo := patternrepo.NewRepository(pgPool)
-	skillRepo := skillrepo.NewRepository(pgPool)
-	skillFileRepo := skillfilerepo.NewRepository(pgPool)
 	enrichmentJobRepo := enrichmentjobrepo.NewRepository(pgPool)
 	graphRepo := graphrepo.NewRepository(neo4jDriver, cfg.Database.Neo4j.Database)
 	chunkRepo := chunkrepo.NewRepository(pgPool)
@@ -211,22 +202,16 @@ func wireDependencies(
 	}
 
 	// Domain services.
-	agentSvc := agentsvc.New(agentRepo, graphRepo, logger)
-	skillSvc := skillsvc.New(skillRepo, logger)
-	skillFileSvc := skillfilesvc.New(skillFileRepo, skillRepo, logger)
-	searchSvc := searchsvc.New(embeddingSvc, patternRepo, agentRepo, chunkRepo, logger)
-	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, agentRepo, pgPool, chunkRepo, pub, logger)
+	searchSvc := searchsvc.New(embeddingSvc, chunkRepo, logger)
+	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, pgPool, chunkRepo, pub, logger)
 
 	// MCP facade.
 	toolDeps := mcpserver.NewToolDependencies(searchSvc, patternSvc)
 
 	// REST API services.
 	svc := Services{
-		Agent:     agentSvc,
-		Pattern:   patternSvc,
-		Search:    searchSvc,
-		Skill:     skillSvc,
-		SkillFile: skillFileSvc,
+		Pattern: patternSvc,
+		Search:  searchSvc,
 	}
 
 	return svc, toolDeps, pub, nil

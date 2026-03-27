@@ -15,7 +15,6 @@ type SearchPatternsInput struct {
 	Limit     *int     `json:"limit,omitempty"    jsonschema:"Maximum number of results to return (default 10, max 50)"`
 	Threshold *float64 `json:"threshold,omitempty" jsonschema:"Minimum cosine similarity score 0.0-1.0 (default 0.7)"`
 	Tags      []string `json:"tags,omitempty"      jsonschema:"Conjunctive (AND) filter by tag. Pattern must contain ALL specified tags."`
-	Agent     string   `json:"agent,omitempty"     jsonschema:"Filter results by agent association"`
 	Language  string   `json:"language,omitempty"  jsonschema:"Optional: filter results by pattern language (e.g. 'go', 'python')"`
 	Domain    string   `json:"domain,omitempty"    jsonschema:"Optional: filter results by pattern domain (e.g. 'backend', 'testing')"`
 }
