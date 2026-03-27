@@ -51,7 +51,7 @@ e2e_tests(){
     trap cleanup EXIT
 
     printf "Starting infrastructure services...\n"
-    if ! docker compose -f "${E2E_COMPOSE_FILE}" up -d postgres neo4j; then
+    if ! docker compose -f "${E2E_COMPOSE_FILE}" up -d postgres neo4j rabbitmq; then
         printf "ERROR: Failed to start infrastructure services\n" >&2
         return 1
     fi
