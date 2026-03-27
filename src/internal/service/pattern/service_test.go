@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/twistingmercury/mnemonic-api/internal/repository"
-	agentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/agent"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	enrichmentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
 	graphrepo "github.com/twistingmercury/mnemonic-api/internal/repository/graph"
@@ -85,27 +84,6 @@ func (m *mockPatternRepo) FindSimilar(ctx context.Context, embedding []float32, 
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*patternrepo.Match), args.Error(1)
-}
-
-func (m *mockPatternRepo) SetAgentAssociations(ctx context.Context, patternID uuid.UUID, associations []patternrepo.AgentAssociation) error {
-	args := m.Called(ctx, patternID, associations)
-	return args.Error(0)
-}
-
-func (m *mockPatternRepo) GetAgentAssociations(ctx context.Context, patternID uuid.UUID) ([]patternrepo.AgentAssociation, error) {
-	args := m.Called(ctx, patternID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]patternrepo.AgentAssociation), args.Error(1)
-}
-
-func (m *mockPatternRepo) GetPatternIDsByAgent(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
-	args := m.Called(ctx, agentID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]uuid.UUID), args.Error(1)
 }
 
 func (m *mockPatternRepo) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
@@ -198,16 +176,6 @@ type mockGraphRepo struct {
 	mock.Mock
 }
 
-func (m *mockGraphRepo) SyncAgent(ctx context.Context, agentName string) error {
-	args := m.Called(ctx, agentName)
-	return args.Error(0)
-}
-
-func (m *mockGraphRepo) DeleteAgent(ctx context.Context, agentName string) error {
-	args := m.Called(ctx, agentName)
-	return args.Error(0)
-}
-
 func (m *mockGraphRepo) SyncPattern(ctx context.Context, pattern *graphrepo.Pattern) error {
 	args := m.Called(ctx, pattern)
 	return args.Error(0)
@@ -220,11 +188,6 @@ func (m *mockGraphRepo) DeletePattern(ctx context.Context, patternID uuid.UUID) 
 
 func (m *mockGraphRepo) SyncConcepts(ctx context.Context, patternID uuid.UUID, concepts []graphrepo.Concept) error {
 	args := m.Called(ctx, patternID, concepts)
-	return args.Error(0)
-}
-
-func (m *mockGraphRepo) SetPatternAgentRelevance(ctx context.Context, patternID uuid.UUID, associations []graphrepo.AgentAssociation) error {
-	args := m.Called(ctx, patternID, associations)
 	return args.Error(0)
 }
 
@@ -249,14 +212,6 @@ func (m *mockGraphRepo) FindRelatedPatterns(ctx context.Context, patternID uuid.
 	return args.Get(0).([]graphrepo.RelatedPattern), args.Error(1)
 }
 
-func (m *mockGraphRepo) FindPatternsByAgent(ctx context.Context, agentName string, limit int) ([]graphrepo.PatternRelevance, error) {
-	args := m.Called(ctx, agentName, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]graphrepo.PatternRelevance), args.Error(1)
-}
-
 func (m *mockGraphRepo) CleanupOrphanedConcepts(ctx context.Context) (int64, error) {
 	args := m.Called(ctx)
 	return args.Get(0).(int64), args.Error(1)
@@ -265,69 +220,6 @@ func (m *mockGraphRepo) CleanupOrphanedConcepts(ctx context.Context) (int64, err
 func (m *mockGraphRepo) HealthCheck(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
-}
-
-// ---------- Mock: agentrepo.Repository ----------
-
-type mockAgentRepo struct {
-	mock.Mock
-}
-
-func (m *mockAgentRepo) Create(ctx context.Context, agent *agentrepo.Agent) error {
-	args := m.Called(ctx, agent)
-	return args.Error(0)
-}
-
-func (m *mockAgentRepo) Get(ctx context.Context, name string) (*agentrepo.Agent, error) {
-	args := m.Called(ctx, name)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*agentrepo.Agent), args.Error(1)
-}
-
-func (m *mockAgentRepo) GetByID(ctx context.Context, id uuid.UUID) (*agentrepo.Agent, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*agentrepo.Agent), args.Error(1)
-}
-
-func (m *mockAgentRepo) Update(ctx context.Context, agent *agentrepo.Agent) error {
-	args := m.Called(ctx, agent)
-	return args.Error(0)
-}
-
-func (m *mockAgentRepo) Delete(ctx context.Context, name string) error {
-	args := m.Called(ctx, name)
-	return args.Error(0)
-}
-
-func (m *mockAgentRepo) DeleteByID(ctx context.Context, id uuid.UUID) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
-}
-
-func (m *mockAgentRepo) List(ctx context.Context, opts repository.ListOptions) ([]*agentrepo.Agent, int64, error) {
-	args := m.Called(ctx, opts)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]*agentrepo.Agent), args.Get(1).(int64), args.Error(2)
-}
-
-func (m *mockAgentRepo) Exists(ctx context.Context, name string) (bool, error) {
-	args := m.Called(ctx, name)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *mockAgentRepo) GetManifest(ctx context.Context) ([]agentrepo.ManifestEntry, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]agentrepo.ManifestEntry), args.Error(1)
 }
 
 // ---------- Mock: repository.TxBeginner ----------
@@ -502,8 +394,6 @@ func (m *mockPublisher) Close() error { return nil }
 
 var (
 	testPatternID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	testAgentID   = uuid.MustParse("22222222-2222-2222-2222-222222222222")
-	testAgent2ID  = uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	testRelatedID = uuid.MustParse("44444444-4444-4444-4444-444444444444")
 )
 
@@ -511,50 +401,46 @@ func newTestService(
 	pr *mockPatternRepo,
 	er *mockEnrichmentRepo,
 	gr *mockGraphRepo,
-	ar *mockAgentRepo,
 	tb *mockTxBeginner,
 ) patternsvc.Service {
 	logger := zerolog.Nop()
 	// chunkRepo is wired: exercises the chunk-aware enrichment job path.
 	// Plain content (no [//]: pattern decorators) produces no chunks; CreateBatch is not called.
-	return patternsvc.New(pr, er, gr, ar, tb, new(mockChunkRepo), &mockPublisher{}, logger)
+	return patternsvc.New(pr, er, gr, tb, new(mockChunkRepo), &mockPublisher{}, logger)
 }
 
 func newTestServiceWithChunkRepo(
 	pr *mockPatternRepo,
 	er *mockEnrichmentRepo,
 	gr *mockGraphRepo,
-	ar *mockAgentRepo,
 	tb *mockTxBeginner,
 	cr *mockChunkRepo,
 ) patternsvc.Service {
 	logger := zerolog.Nop()
-	return patternsvc.New(pr, er, gr, ar, tb, cr, &mockPublisher{}, logger)
+	return patternsvc.New(pr, er, gr, tb, cr, &mockPublisher{}, logger)
 }
 
 func newTestServiceWithChunkRepoAndLogger(
 	pr *mockPatternRepo,
 	er *mockEnrichmentRepo,
 	gr *mockGraphRepo,
-	ar *mockAgentRepo,
 	tb *mockTxBeginner,
 	cr *mockChunkRepo,
 	logger zerolog.Logger,
 ) patternsvc.Service {
-	return patternsvc.New(pr, er, gr, ar, tb, cr, &mockPublisher{}, logger)
+	return patternsvc.New(pr, er, gr, tb, cr, &mockPublisher{}, logger)
 }
 
 func newTestServiceWithPublisher(
 	pr *mockPatternRepo,
 	er *mockEnrichmentRepo,
 	gr *mockGraphRepo,
-	ar *mockAgentRepo,
 	tb *mockTxBeginner,
 	cr *mockChunkRepo,
 	pub *mockPublisher,
 ) patternsvc.Service {
 	logger := zerolog.Nop()
-	return patternsvc.New(pr, er, gr, ar, tb, cr, pub, logger)
+	return patternsvc.New(pr, er, gr, tb, cr, pub, logger)
 }
 
 func testCreateInput() patternsvc.CreateInput {
@@ -564,9 +450,6 @@ func testCreateInput() patternsvc.CreateInput {
 		Description: &desc,
 		Content:     "Always handle errors explicitly.",
 		Tags:        []string{"golang", "best-practices"},
-		AgentAssociations: []patternsvc.AssociationInput{
-			{AgentName: "code-reviewer", Relevance: 0.9},
-		},
 	}
 }
 
@@ -577,9 +460,6 @@ func testUpdateInput() patternsvc.UpdateInput {
 		Description: &desc,
 		Content:     "Updated content.",
 		Tags:        []string{"golang", "errors"},
-		AgentAssociations: []patternsvc.AssociationInput{
-			{AgentName: "code-reviewer", Relevance: 0.8},
-		},
 	}
 }
 
@@ -612,15 +492,8 @@ func TestCreate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		// Agent resolution.
-		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
+		svc := newTestService(pr, er, gr, tb)
 
 		// Pattern creation.
 		pr.On("Create", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
@@ -630,16 +503,6 @@ func TestCreate(t *testing.T) {
 			p.ID = testPatternID
 			p.EnrichmentStatus = "pending"
 		}).Return(nil)
-
-		// Agent associations.
-		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.MatchedBy(func(assocs []patternrepo.AgentAssociation) bool {
-			return len(assocs) == 1 && assocs[0].AgentID == testAgentID && assocs[0].Relevance == 0.9
-		})).Return(nil)
-
-		// Neo4j sync.
-		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.MatchedBy(func(assocs []graphrepo.AgentAssociation) bool {
-			return len(assocs) == 1 && assocs[0].AgentName == "code-reviewer" && assocs[0].Relevance == 0.9
-		})).Return(nil)
 
 		result, err := svc.Create(context.Background(), testCreateInput())
 
@@ -651,29 +514,6 @@ func TestCreate(t *testing.T) {
 
 		pr.AssertExpectations(t)
 		gr.AssertExpectations(t)
-		ar.AssertExpectations(t)
-	})
-
-	t.Run("agent not found returns service.ErrNotFound", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		ar.On("Get", mock.Anything, "code-reviewer").Return(nil, agentrepo.ErrNotFound)
-
-		result, err := svc.Create(context.Background(), testCreateInput())
-
-		assert.Nil(t, result)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
-		assert.Contains(t, err.Error(), "code-reviewer")
-
-		pr.AssertNotCalled(t, "Create")
 	})
 
 	t.Run("pattern name conflict returns service.ErrConflict", func(t *testing.T) {
@@ -682,14 +522,9 @@ func TestCreate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
-		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
 		pr.On("Create", mock.Anything, mock.Anything).Return(patternrepo.ErrNameExists)
 
 		result, err := svc.Create(context.Background(), testCreateInput())
@@ -699,38 +534,6 @@ func TestCreate(t *testing.T) {
 		assert.True(t, errors.Is(err, service.ErrConflict), "expected service.ErrConflict, got: %v", err)
 
 		er.AssertNotCalled(t, "Create")
-	})
-
-	t.Run("neo4j failure logged but not returned", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
-		pr.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-			p := args.Get(1).(*patternrepo.Pattern)
-			p.ID = testPatternID
-		}).Return(nil)
-		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.Anything).Return(nil)
-		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.Anything).
-			Return(errors.New("neo4j unavailable"))
-
-		result, err := svc.Create(context.Background(), testCreateInput())
-
-		require.NoError(t, err, "neo4j failure should not propagate")
-		require.NotNil(t, result)
-		assert.Equal(t, "go-error-handling", result.Name)
-
-		pr.AssertExpectations(t)
-		gr.AssertExpectations(t)
 	})
 }
 
@@ -745,9 +548,8 @@ func TestGet(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
 
@@ -767,9 +569,8 @@ func TestGet(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
 
@@ -792,9 +593,8 @@ func TestGetWithGraph(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
 
@@ -840,9 +640,8 @@ func TestGetWithGraph(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil) // status = "pending"
 
@@ -862,9 +661,8 @@ func TestGetWithGraph(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
 		gr.On("FindRelatedPatterns", mock.Anything, testPatternID, 10).
@@ -889,22 +687,15 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		input := testUpdateInput()
 
 		// Get existing.
 		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-
-		// Agent resolution.
-		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
 
 		// Transaction lifecycle.
 		tb.On("Begin", mock.Anything).Return(tx, nil)
@@ -916,19 +707,11 @@ func TestUpdate(t *testing.T) {
 			return p.ID == testPatternID && p.Name == "go-error-handling-v2" && p.Content == "Updated content."
 		})).Return(nil)
 
-		// Associations.
-		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.MatchedBy(func(assocs []patternrepo.AgentAssociation) bool {
-			return len(assocs) == 1 && assocs[0].AgentID == testAgentID && assocs[0].Relevance == 0.8
-		})).Return(nil)
-
 		// Delete stale chunks ("Updated content." has no [//]: pattern sections → 0 chunks).
 		cr.On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
 
 		// No CreateBatch call (0 chunks).
 		// No er.On("Create") call (0 chunks → no per-chunk jobs).
-
-		// Neo4j sync.
-		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.Anything).Return(nil)
 
 		result, err := svc.Update(context.Background(), testPatternID, input)
 
@@ -942,7 +725,6 @@ func TestUpdate(t *testing.T) {
 		pr.AssertExpectations(t)
 		cr.AssertExpectations(t)
 		gr.AssertExpectations(t)
-		ar.AssertExpectations(t)
 	})
 
 	t.Run("not found", func(t *testing.T) {
@@ -951,9 +733,8 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
 
@@ -972,11 +753,10 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		input := patternsvc.UpdateInput{
 			Name:    "go-error-handling-v2",
@@ -994,7 +774,7 @@ func TestUpdate(t *testing.T) {
 		// Get existing.
 		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
 
-		// Update (no agent associations in input, so no agent resolution needed).
+		// Update.
 		pr.On("Update", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
 			return p.ID == testPatternID && p.Name == "go-error-handling-v2"
 		})).Return(nil)
@@ -1024,7 +804,6 @@ func TestUpdate(t *testing.T) {
 		pr.AssertExpectations(t)
 		cr.AssertExpectations(t)
 		er.AssertExpectations(t)
-		gr.AssertNotCalled(t, "SetPatternAgentRelevance")
 	})
 
 	t.Run("chunk-aware path: delete stale chunks error rolls back transaction and propagates error", func(t *testing.T) {
@@ -1033,11 +812,10 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		input := patternsvc.UpdateInput{
 			Name:    "go-error-handling-v2",
@@ -1072,11 +850,10 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		input := patternsvc.UpdateInput{
 			Name:    "go-error-handling-v2",
@@ -1123,11 +900,10 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		input := patternsvc.UpdateInput{
 			Name:    "go-error-handling-v2",
@@ -1162,11 +938,10 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		input := patternsvc.UpdateInput{
 			Name:    "go-error-handling-v2",
@@ -1199,12 +974,11 @@ func TestUpdate(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
 		pub := &mockPublisher{}
-		svc := newTestServiceWithPublisher(pr, er, gr, ar, tb, cr, pub)
+		svc := newTestServiceWithPublisher(pr, er, gr, tb, cr, pub)
 
 		input := patternsvc.UpdateInput{
 			Name:    "go-error-handling-v2",
@@ -1245,13 +1019,12 @@ func TestCreate_ChunkJobFailuresSummarisedInLog(t *testing.T) {
 	pr := new(mockPatternRepo)
 	er := new(mockEnrichmentRepo)
 	gr := new(mockGraphRepo)
-	ar := new(mockAgentRepo)
 	tb := new(mockTxBeginner)
 	cr := new(mockChunkRepo)
 
 	var buf bytes.Buffer
 	logger := zerolog.New(&buf)
-	svc := newTestServiceWithChunkRepoAndLogger(pr, er, gr, ar, tb, cr, logger)
+	svc := newTestServiceWithChunkRepoAndLogger(pr, er, gr, tb, cr, logger)
 
 	input := patternsvc.CreateInput{
 		Name:    "go-error-handling",
@@ -1290,14 +1063,13 @@ func TestUpdate_ChunkJobFailuresSummarisedInLog(t *testing.T) {
 	pr := new(mockPatternRepo)
 	er := new(mockEnrichmentRepo)
 	gr := new(mockGraphRepo)
-	ar := new(mockAgentRepo)
 	tb := new(mockTxBeginner)
 	cr := new(mockChunkRepo)
 	tx := new(mockPgxTx)
 
 	var buf bytes.Buffer
 	logger := zerolog.New(&buf)
-	svc := newTestServiceWithChunkRepoAndLogger(pr, er, gr, ar, tb, cr, logger)
+	svc := newTestServiceWithChunkRepoAndLogger(pr, er, gr, tb, cr, logger)
 
 	input := patternsvc.UpdateInput{
 		Name:    "go-error-handling-v2",
@@ -1341,9 +1113,8 @@ func TestDelete(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Delete", mock.Anything, testPatternID).Return(nil)
 		gr.On("DeletePattern", mock.Anything, testPatternID).Return(nil)
@@ -1363,9 +1134,8 @@ func TestDelete(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Delete", mock.Anything, testPatternID).Return(patternrepo.ErrNotFound)
 
@@ -1390,9 +1160,8 @@ func TestList(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		patterns := []*patternrepo.Pattern{
 			{ID: testPatternID, Name: "pattern-a"},
@@ -1418,229 +1187,6 @@ func TestList(t *testing.T) {
 	})
 }
 
-// ---------- SetAgentAssociations ----------
-
-func TestSetAgentAssociations(t *testing.T) {
-	t.Parallel()
-
-	t.Run("happy path", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
-		ar.On("Get", mock.Anything, "doc-writer").Return(&agentrepo.Agent{
-			ID:   testAgent2ID,
-			Name: "doc-writer",
-		}, nil)
-
-		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.MatchedBy(func(assocs []patternrepo.AgentAssociation) bool {
-			return len(assocs) == 2
-		})).Return(nil)
-
-		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.MatchedBy(func(assocs []graphrepo.AgentAssociation) bool {
-			return len(assocs) == 2
-		})).Return(nil)
-
-		err := svc.SetAgentAssociations(context.Background(), testPatternID, []patternsvc.AssociationInput{
-			{AgentName: "code-reviewer", Relevance: 0.9},
-			{AgentName: "doc-writer", Relevance: 0.7},
-		})
-
-		require.NoError(t, err)
-
-		pr.AssertExpectations(t)
-		gr.AssertExpectations(t)
-		ar.AssertExpectations(t)
-	})
-
-	t.Run("agent not found", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		ar.On("Get", mock.Anything, "missing-agent").Return(nil, agentrepo.ErrNotFound)
-
-		err := svc.SetAgentAssociations(context.Background(), testPatternID, []patternsvc.AssociationInput{
-			{AgentName: "missing-agent", Relevance: 0.5},
-		})
-
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
-		assert.Contains(t, err.Error(), "missing-agent")
-
-		pr.AssertNotCalled(t, "SetAgentAssociations")
-	})
-}
-
-// ---------- GetAgentAssociations ----------
-
-func TestGetAgentAssociations(t *testing.T) {
-	t.Parallel()
-
-	t.Run("happy path", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		existingPattern := &patternrepo.Pattern{ID: testPatternID, Name: "go-error-handling"}
-		expected := []patternrepo.AgentAssociation{
-			{AgentID: testAgentID, Relevance: 0.9},
-			{AgentID: testAgent2ID, Relevance: 0.7},
-		}
-		pr.On("Get", mock.Anything, testPatternID).Return(existingPattern, nil)
-		pr.On("GetAgentAssociations", mock.Anything, testPatternID).Return(expected, nil)
-
-		result, err := svc.GetAgentAssociations(context.Background(), testPatternID)
-
-		require.NoError(t, err)
-		assert.Len(t, result, 2)
-		assert.Equal(t, testAgentID, result[0].AgentID)
-		assert.InDelta(t, 0.9, result[0].Relevance, 0.001)
-
-		pr.AssertExpectations(t)
-	})
-
-	t.Run("pattern not found returns ErrNotFound", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
-
-		result, err := svc.GetAgentAssociations(context.Background(), testPatternID)
-
-		require.Error(t, err)
-		assert.ErrorIs(t, err, service.ErrNotFound)
-		assert.Nil(t, result)
-
-		pr.AssertExpectations(t)
-	})
-}
-
-// ---------- ResolveAgentNames ----------
-
-func TestResolveAgentNames(t *testing.T) {
-	t.Parallel()
-
-	t.Run("happy path resolves all IDs", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		ar.On("GetByID", mock.Anything, testAgentID).Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
-		ar.On("GetByID", mock.Anything, testAgent2ID).Return(&agentrepo.Agent{
-			ID:   testAgent2ID,
-			Name: "doc-writer",
-		}, nil)
-
-		names, err := svc.ResolveAgentNames(context.Background(), []uuid.UUID{testAgentID, testAgent2ID})
-
-		require.NoError(t, err)
-		assert.Len(t, names, 2)
-		assert.Equal(t, "code-reviewer", names[testAgentID])
-		assert.Equal(t, "doc-writer", names[testAgent2ID])
-
-		ar.AssertExpectations(t)
-	})
-
-	t.Run("empty input returns empty map", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		names, err := svc.ResolveAgentNames(context.Background(), []uuid.UUID{})
-
-		require.NoError(t, err)
-		assert.Empty(t, names)
-
-		ar.AssertNotCalled(t, "GetByID")
-	})
-
-	t.Run("unknown agent ID is omitted silently", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		unknownID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
-		ar.On("GetByID", mock.Anything, testAgentID).Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
-		ar.On("GetByID", mock.Anything, unknownID).Return(nil, agentrepo.ErrNotFound)
-
-		names, err := svc.ResolveAgentNames(context.Background(), []uuid.UUID{testAgentID, unknownID})
-
-		require.NoError(t, err)
-		assert.Len(t, names, 1)
-		assert.Equal(t, "code-reviewer", names[testAgentID])
-		_, exists := names[unknownID]
-		assert.False(t, exists)
-
-		ar.AssertExpectations(t)
-	})
-
-	t.Run("repository error propagates", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
-
-		ar.On("GetByID", mock.Anything, testAgentID).Return(nil, errors.New("db connection lost"))
-
-		names, err := svc.ResolveAgentNames(context.Background(), []uuid.UUID{testAgentID})
-
-		require.Error(t, err)
-		assert.Nil(t, names)
-		assert.Contains(t, err.Error(), "db connection lost")
-	})
-}
-
 // ---------- FindRelated ----------
 
 func TestFindRelated(t *testing.T) {
@@ -1652,9 +1198,8 @@ func TestFindRelated(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Exists", mock.Anything, testPatternID).Return(true, nil)
 
@@ -1688,9 +1233,8 @@ func TestFindRelated(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, ar, tb)
+		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Exists", mock.Anything, testPatternID).Return(false, nil)
 
@@ -1715,10 +1259,9 @@ func TestCreate_ChunksContent(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		desc := "A chunked pattern"
 		input := patternsvc.CreateInput{
@@ -1741,8 +1284,6 @@ func TestCreate_ChunksContent(t *testing.T) {
 			p.EnrichmentStatus = "pending"
 		}).Return(nil)
 
-		// No agent associations (none provided).
-
 		// Chunk batch creation: expect 2 chunks.
 		cr.On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
 			return len(chunks) == 2
@@ -1752,8 +1293,6 @@ func TestCreate_ChunksContent(t *testing.T) {
 		er.On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
 			return j.ChunkID != nil && j.PatternID == nil
 		})).Return(nil).Times(2)
-
-		// No Neo4j sync (no agent associations).
 
 		result, err := svc.Create(context.Background(), input)
 
@@ -1765,7 +1304,6 @@ func TestCreate_ChunksContent(t *testing.T) {
 		pr.AssertExpectations(t)
 		cr.AssertExpectations(t)
 		er.AssertExpectations(t)
-		gr.AssertNotCalled(t, "SetPatternAgentRelevance")
 	})
 }
 
@@ -1780,10 +1318,9 @@ func TestListChunks(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		expectedChunks := []*chunkrepo.Chunk{
 			{ChunkIndex: 0, SectionTitle: "Overview", EnrichmentStatus: "pending"},
@@ -1812,10 +1349,9 @@ func TestListChunks(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
 
@@ -1834,10 +1370,9 @@ func TestListChunks(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
 		cr.On("ListByPatternID", mock.Anything, testPatternID).Return([]*chunkrepo.Chunk{}, nil)
@@ -1857,10 +1392,9 @@ func TestListChunks(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, ar, tb, cr)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
 		cr.On("ListByPatternID", mock.Anything, testPatternID).Return(nil, errors.New("db error"))
@@ -1884,13 +1418,12 @@ func newTestServiceWithFailingPublisher(
 	pr *mockPatternRepo,
 	er *mockEnrichmentRepo,
 	gr *mockGraphRepo,
-	ar *mockAgentRepo,
 	tb *mockTxBeginner,
 	cr *mockChunkRepo,
 	pub *mockPublisher,
 ) patternsvc.Service {
 	logger := zerolog.Nop()
-	return patternsvc.New(pr, er, gr, ar, tb, cr, pub, logger)
+	return patternsvc.New(pr, er, gr, tb, cr, pub, logger)
 }
 
 func TestPublishJobError(t *testing.T) {
@@ -1902,24 +1435,17 @@ func TestPublishJobError(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		pub := &mockPublisher{publishErr: errors.New("queue unavailable")}
-		svc := newTestServiceWithFailingPublisher(pr, er, gr, ar, tb, cr, pub)
+		svc := newTestServiceWithFailingPublisher(pr, er, gr, tb, cr, pub)
 
-		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
 		pr.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 			p := args.Get(1).(*patternrepo.Pattern)
 			p.ID = testPatternID
 			p.EnrichmentStatus = "pending"
 		}).Return(nil)
-		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.Anything).Return(nil)
 		// testCreateInput() content has no [//]: pattern sections → no chunks → no enrichment jobs.
-		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.Anything).Return(nil)
 
 		result, err := svc.Create(context.Background(), testCreateInput())
 
@@ -1936,18 +1462,13 @@ func TestPublishJobError(t *testing.T) {
 		pr := new(mockPatternRepo)
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
-		ar := new(mockAgentRepo)
 		tb := new(mockTxBeginner)
 		cr := new(mockChunkRepo)
 		tx := new(mockPgxTx)
 		pub := &mockPublisher{publishErr: errors.New("queue unavailable")}
-		svc := newTestServiceWithFailingPublisher(pr, er, gr, ar, tb, cr, pub)
+		svc := newTestServiceWithFailingPublisher(pr, er, gr, tb, cr, pub)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		ar.On("Get", mock.Anything, "code-reviewer").Return(&agentrepo.Agent{
-			ID:   testAgentID,
-			Name: "code-reviewer",
-		}, nil)
 
 		// Transaction lifecycle.
 		tb.On("Begin", mock.Anything).Return(tx, nil)
@@ -1955,11 +1476,9 @@ func TestPublishJobError(t *testing.T) {
 		tx.On("Rollback", mock.Anything).Return(nil)
 
 		pr.On("Update", mock.Anything, mock.Anything).Return(nil)
-		pr.On("SetAgentAssociations", mock.Anything, testPatternID, mock.Anything).Return(nil)
 		// testUpdateInput() content "Updated content." has no [//]: pattern sections → 0 chunks.
 		cr.On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
 		// No CreateBatch (0 chunks). No er.On("Create") (no per-chunk jobs).
-		gr.On("SetPatternAgentRelevance", mock.Anything, testPatternID, mock.Anything).Return(nil)
 
 		result, err := svc.Update(context.Background(), testPatternID, testUpdateInput())
 
