@@ -1,77 +1,5 @@
 basePath: /v1/api
 definitions:
-  agents.agentCreateRequest:
-    description: Request body for creating a new agent
-    properties:
-      allowed_tools:
-        items:
-          type: string
-        type: array
-      description:
-        type: string
-      model:
-        type: string
-      name:
-        type: string
-      system_prompt:
-        type: string
-      version:
-        type: string
-    type: object
-  agents.agentListResponse:
-    description: Paginated list of agents
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/agents.agentResponse'
-        type: array
-      pagination:
-        $ref: '#/definitions/handlers.Pagination'
-    type: object
-  agents.agentResponse:
-    description: Agent resource returned by create, get, and update operations
-    properties:
-      allowed_tools:
-        items:
-          type: string
-        type: array
-      crc64:
-        type: string
-      created_at:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      model:
-        type: string
-      name:
-        type: string
-      system_prompt:
-        type: string
-      updated_at:
-        type: string
-      version:
-        type: string
-    type: object
-  agents.agentUpdateRequest:
-    description: Request body for updating an existing agent
-    properties:
-      allowed_tools:
-        items:
-          type: string
-        type: array
-      description:
-        type: string
-      model:
-        type: string
-      name:
-        type: string
-      system_prompt:
-        type: string
-      version:
-        type: string
-    type: object
   handlers.FieldError:
     description: Field-level validation error returned inside a ProblemDetail
     properties:
@@ -112,14 +40,14 @@ definitions:
     description: RFC 7807 Problem Details error response
     properties:
       detail:
-        example: agent not found
+        example: pattern not found
         type: string
       errors:
         items:
           $ref: '#/definitions/handlers.FieldError'
         type: array
       instance:
-        example: /v1/api/agents/my-agent
+        example: /v1/api/patterns/my-pattern
         type: string
       status:
         example: 404
@@ -133,42 +61,6 @@ definitions:
       type:
         example: https://mnemonic.example.com/problems/not-found
         type: string
-    type: object
-  patterns.associationRequest:
-    description: Agent association entry used in pattern create and update requests
-    properties:
-      agent_name:
-        type: string
-      relevance:
-        type: number
-    required:
-    - agent_name
-    type: object
-  patterns.associationResponse:
-    description: Agent association returned in pattern responses
-    properties:
-      agent_name:
-        type: string
-      relevance:
-        type: number
-    type: object
-  patterns.associationsRequest:
-    description: Request body for setting agent associations on a pattern
-    properties:
-      associations:
-        items:
-          $ref: '#/definitions/patterns.associationRequest'
-        type: array
-    required:
-    - associations
-    type: object
-  patterns.associationsResponse:
-    description: Response body containing the current agent associations for a pattern
-    properties:
-      associations:
-        items:
-          $ref: '#/definitions/patterns.associationResponse'
-        type: array
     type: object
   patterns.chunkListResponse:
     description: List of chunk summaries for a pattern
@@ -213,10 +105,6 @@ definitions:
   patterns.patternCreateRequest:
     description: Request body for creating a new pattern
     properties:
-      agent_associations:
-        items:
-          $ref: '#/definitions/patterns.associationRequest'
-        type: array
       content:
         type: string
       description:
@@ -253,10 +141,6 @@ definitions:
   patterns.patternResponse:
     description: Full pattern resource returned by create, get, and update operations
     properties:
-      agent_associations:
-        items:
-          $ref: '#/definitions/patterns.associationResponse'
-        type: array
       chunks:
         items:
           $ref: '#/definitions/patterns.chunkSummary'
@@ -321,10 +205,6 @@ definitions:
   patterns.patternUpdateRequest:
     description: Request body for updating an existing pattern
     properties:
-      agent_associations:
-        items:
-          $ref: '#/definitions/patterns.associationRequest'
-        type: array
       content:
         type: string
       description:
@@ -406,121 +286,6 @@ definitions:
           type: string
         type: array
     type: object
-  skills.fileCounts:
-    description: File counts for a skill
-    properties:
-      assets_count:
-        type: integer
-      references_count:
-        type: integer
-      scripts_count:
-        type: integer
-    type: object
-  skills.skillCreateRequest:
-    description: Request body for creating a skill
-    properties:
-      allowed_tools:
-        items:
-          type: string
-        type: array
-      compatibility:
-        type: string
-      content:
-        type: string
-      description:
-        type: string
-      license:
-        type: string
-      metadata:
-        additionalProperties:
-          type: string
-        type: object
-      name:
-        type: string
-      tags:
-        items:
-          type: string
-        type: array
-      version:
-        type: string
-    type: object
-  skills.skillListResponse:
-    description: Paginated list of skills
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/skills.skillResponse'
-        type: array
-      pagination:
-        $ref: '#/definitions/handlers.Pagination'
-    type: object
-  skills.skillResponse:
-    description: Skill resource representation returned by create, get, and update
-      operations
-    properties:
-      allowed_tools:
-        items:
-          type: string
-        type: array
-      compatibility:
-        type: string
-      content:
-        type: string
-      crc64:
-        type: string
-      created_at:
-        type: string
-      description:
-        type: string
-      files:
-        $ref: '#/definitions/skills.fileCounts'
-      id:
-        type: string
-      license:
-        type: string
-      metadata:
-        additionalProperties:
-          type: string
-        type: object
-      name:
-        type: string
-      tags:
-        items:
-          type: string
-        type: array
-      updated_at:
-        type: string
-      version:
-        type: string
-    type: object
-  skills.skillUpdateRequest:
-    description: Request body for updating a skill
-    properties:
-      allowed_tools:
-        items:
-          type: string
-        type: array
-      compatibility:
-        type: string
-      content:
-        type: string
-      description:
-        type: string
-      license:
-        type: string
-      metadata:
-        additionalProperties:
-          type: string
-        type: object
-      name:
-        type: string
-      tags:
-        items:
-          type: string
-        type: array
-      version:
-        type: string
-    type: object
 host: localhost:8080
 info:
   contact: {}
@@ -528,153 +293,6 @@ info:
   title: Mnemonic API
   version: "1.0"
 paths:
-  /agents:
-    get:
-      parameters:
-      - description: Max results (1–200, default 100)
-        in: query
-        name: limit
-        type: integer
-      - description: Pagination cursor
-        in: query
-        name: cursor
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/agents.agentListResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: List agents
-      tags:
-      - Agents
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Agent to create
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/agents.agentCreateRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/agents.agentResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Create agent
-      tags:
-      - Agents
-  /agents/{name}:
-    delete:
-      parameters:
-      - description: Agent name
-        in: path
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Delete agent
-      tags:
-      - Agents
-    get:
-      parameters:
-      - description: Agent name
-        in: path
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/agents.agentResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Get agent
-      tags:
-      - Agents
-    put:
-      consumes:
-      - application/json
-      parameters:
-      - description: Agent name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Agent fields to update
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/agents.agentUpdateRequest'
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Update agent
-      tags:
-      - Agents
   /patterns:
     get:
       parameters:
@@ -850,69 +468,6 @@ paths:
       summary: Update pattern
       tags:
       - Patterns
-  /patterns/{id}/agents:
-    get:
-      parameters:
-      - description: Pattern UUID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/patterns.associationsResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Get pattern agent associations
-      tags:
-      - Patterns
-    put:
-      consumes:
-      - application/json
-      parameters:
-      - description: Pattern UUID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Agent associations to set
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/patterns.associationsRequest'
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Set pattern agent associations
-      tags:
-      - Patterns
   /patterns/{id}/chunks:
     get:
       parameters:
@@ -963,10 +518,6 @@ paths:
         in: query
         name: tags
         type: string
-      - description: Agent name filter
-        in: query
-        name: agent
-        type: string
       - description: Language filter
         in: query
         name: language
@@ -993,151 +544,6 @@ paths:
       summary: Search patterns
       tags:
       - Patterns
-  /skills:
-    get:
-      parameters:
-      - description: Max results (1–200, default 100)
-        in: query
-        name: limit
-        type: integer
-      - description: Pagination cursor
-        in: query
-        name: cursor
-        type: string
-      - description: Comma-separated tag filter
-        in: query
-        name: tags
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/skills.skillListResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: List skills
-      tags:
-      - Skills
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Skill to create
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/skills.skillCreateRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/skills.skillResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Create a skill
-      tags:
-      - Skills
-  /skills/{name}:
-    delete:
-      parameters:
-      - description: Skill name
-        in: path
-        name: name
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Delete a skill
-      tags:
-      - Skills
-    get:
-      parameters:
-      - description: Skill name
-        in: path
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/skills.skillResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Get a skill by name
-      tags:
-      - Skills
-    put:
-      consumes:
-      - application/json
-      parameters:
-      - description: Skill name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Skill fields to update
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/skills.skillUpdateRequest'
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/handlers.ProblemDetail'
-      summary: Update a skill
-      tags:
-      - Skills
   /version:
     get:
       produces:
