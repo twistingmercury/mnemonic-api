@@ -1,7 +1,7 @@
 # mnemonic-api
 
-> **Maturity Level**: Emerging - Admin REST API under active development
-> **Version**: v0.2.0
+> **Maturity Level**: Emerging - interfaces and local workflows are still evolving
+> **Version**: v0.2.1
 
 ---
 
@@ -11,97 +11,116 @@
 - [How it works](#how-it-works)
 - [Key Considerations](#key-considerations)
 - [Development Considerations](#development-considerations)
-- [Versioning](#versioning)
+  - [Quick Start](#quick-start)
+  - [Building & running](#building--running)
+  - [Configuration](#configuration)
+  - [Testing](#testing)
+  - [API documentation](#api-documentation)
+  - [Versioning](#versioning)
 
 ## Usage
 
-Mnemonic-api is a REST Admin API for managing the Mnemonic knowledge graph — primarily patterns.
+Mnemonic-api manages reusable knowledge-graph patterns through an Admin REST API and exposes read-only pattern retrieval through the Model Context Protocol (MCP).
+
+With the service running directly on its default ports, create and search patterns through the REST API:
 
 ```bash
-# Store a new pattern
-curl -X POST http://localhost:8080/v1/api/patterns \
-  -H "Content-Type: application/json" \
-  -d '{
+curl --request POST http://localhost:8080/v1/api/patterns \
+  --header "Content-Type: application/json" \
+  --data '{
     "name": "go-error-wrapping",
     "description": "Pattern for wrapping errors with context",
-    "content": "Use fmt.Errorf with %w for error chains...",
-    "tags": ["go", "error-handling"]
+    "content": "Use fmt.Errorf with %w to preserve the error chain.",
+    "tags": ["go", "error-handling"],
+    "entity_type": "go-pattern",
+    "language": "go",
+    "domain": "backend"
   }'
 
-# Search patterns semantically
-curl -X GET "http://localhost:8080/v1/api/patterns/search?q=error+handling&limit=5"
+curl --get http://localhost:8080/v1/api/patterns/search \
+  --data-urlencode "q=error handling" \
+  --data-urlencode "limit=5"
 ```
 
-See the [API Specification](docs/openapi/mnemonic-v1.yaml) for complete endpoint documentation, or browse the Swagger UI at `http://localhost:8080/swagger/index.html` when the service is running.
+The generated [Swagger 2.0 specification](src/docs/swagger/swagger.yaml) documents the complete REST API. Swagger UI is available at `http://localhost:8080/swagger/index.html`. The MCP endpoint is `http://localhost:8081/mcp`.
 
 ## How it works
 
-Mnemonic-api is a Go service that exposes a REST Admin API (port 8080) backed by PostgreSQL, PGVector, and Neo4j.
+The Go process runs the REST API on port 8080 and a stateless MCP server on port 8081. It connects to PostgreSQL with PGVector for pattern and chunk storage, Neo4j for graph relationships, RabbitMQ for enrichment jobs, and OpenAI for query embeddings.
 
-- **Patterns** are stored with vector embeddings (PGVector) for semantic search and concept relationships (Neo4j) for graph traversal.
-- **Pattern enrichment** automatically extracts embeddings and concepts via an LLM pipeline. See [Pattern Processing](docs/design/pattern-processing.md).
+- Pattern mutations are handled by the REST API under `/v1/api/patterns`.
+- Semantic searches embed the query and rank enriched pattern chunks by vector similarity.
+- The MCP server provides `search_patterns`, `find_related_patterns`, and `get_pattern` as read-only tools.
+- Health is exposed at `/health`; Prometheus metrics use a separate listener on port 9090 by default.
 
 ## Key Considerations
 
-- **Scope**: REST Admin API only — no MCP server, no routing engine.
-- **MVP scope**: Local deployment via Docker Compose, single-user trusted environment, no authentication.
-- **Swagger UI**: Available at `http://localhost:8080/swagger/index.html` while the service is running.
-- **Post-MVP**: Multi-user authentication, rate limiting, and remote access are out of scope for Phase 1.
+- The current deployment model assumes a trusted environment and does not authenticate REST or MCP requests.
+- Pattern creation is asynchronous and returns `202 Accepted`; semantic results become available after enrichment completes.
+- PostgreSQL, Neo4j, RabbitMQ, and an OpenAI API key are required for a working runtime.
+- Direct execution uses ports 8080, 8081, and 9090. The root Docker Compose stack publishes the Admin API on port 3000; port 8091 belongs to its separate `dev_mcp` service rather than mnemonic-api's MCP listener.
+- Configuration and API contracts may change while the project remains at the Emerging maturity level.
 
 ## Development Considerations
 
 ### Quick Start
 
-Clone and build:
+Prerequisites are Go 1.26.6, Docker, Docker Compose v2, and Git.
 
 ```bash
 git clone https://github.com/twistingmercury/mnemonic-api.git
-cd mnemonic-api/src
-./build/build.sh
+cd mnemonic-api
+export MNEMONIC_OPENAI_API_KEY="your-api-key"
+make build
 ```
 
-This builds the Docker image (`ghcr.io/twistingmercury/mnemonic-api`) and runs E2E tests via Docker Compose. Requires Go 1.26+, Docker 27+, and Docker Compose 2.32+.
+`make build` builds `ghcr.io/twistingmercury/mnemonic-api`, runs its unit tests in the Docker build, and executes the Docker Compose E2E suite.
+
+### Building & running
+
+Run all commands from the repository root:
+
+```bash
+make help
+make build
+make start
+```
+
+`make start` launches the root [Docker Compose stack](docker-compose.yaml). Its application services require locally built images (`pull_policy: never`), including the companion `ghcr.io/twistingmercury/mnemonic:latest-dev` image, and publish mnemonic-api at `http://localhost:3000`. `make stop` removes the Compose volumes, deletes the local `migrate/migrate:latest` image, and prunes unused Docker data.
 
 ### Configuration
 
-Mnemonic-api uses layered configuration:
+Configuration precedence is built-in defaults, an optional YAML file, then `MNEMONIC_` environment variables. Set `MNEMONIC_CONFIG_FILE` to choose a file explicitly; otherwise the service checks `/etc/mnemonic/config.yaml` and `./config.yaml`.
 
-1. **Built-in defaults** — safe defaults for all settings
-2. **Config file** — `config.yaml` searched in `/etc/mnemonic/` or the current directory
-3. **Environment variables** — `MNEMONIC_` prefix overrides any setting (e.g. `MNEMONIC_SERVER_PORT=9090`)
+Nested keys use underscores in environment variables. For example, `server.port` becomes `MNEMONIC_SERVER_PORT`, and the OpenAI credential is `MNEMONIC_OPENAI_API_KEY`.
 
-See the [Configuration Reference](docs/design/configuration.md) for all available settings.
+### Testing
 
-### Swagger docs
+The root Makefile provides the supported test entry points:
 
-Regenerate Swagger docs locally before committing (run from `src/`):
+```bash
+make tests-unit       # Unit tests with coverage
+make tests-db         # PostgreSQL and Neo4j repository integration tests
+make tests-bench      # Internal package benchmarks
+make build            # Image build plus the full E2E suite
+```
+
+Database integration and E2E tests require Docker.
+
+### API documentation
+
+Regenerate the tracked Swagger files after changing routes or schemas:
 
 ```bash
 make docs-swagger
 ```
 
-### Testing
-
-Unit tests (run from `src/`):
-
-```bash
-go test ./...
-```
-
-E2E tests (requires Docker, run from `src/`):
-
-```bash
-./build/build.sh
-```
-
 ### Versioning
 
-This project follows [Semantic Versioning 2.0.0](https://semver.org/).
-
-Version is determined from git tags:
+This project follows [Semantic Versioning 2.0.0](https://semver.org/). Build metadata derives the version from the latest reachable Git tag:
 
 ```bash
-git describe --tags --always
+git describe --tags --abbrev=0
 ```
 
-No releases published yet. See [CHANGELOG.md](CHANGELOG.md) for development progress.
+See [CHANGELOG.md](CHANGELOG.md) for development history.

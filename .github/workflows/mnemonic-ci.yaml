@@ -12,7 +12,10 @@ on:
       - "src/go.sum"
       - "src/build/**"
       - "src/tests/**"
-      - ".github/workflows/mnemonic-ci.yaml"
+      - "src/docs/**"
+      - ".dockerignore"
+      - "LICENSE"
+      - ".github/workflows/**"
   pull_request:
     branches:
       - main
@@ -24,7 +27,10 @@ on:
       - "src/go.sum"
       - "src/build/**"
       - "src/tests/**"
-      - ".github/workflows/mnemonic-ci.yaml"
+      - "src/docs/**"
+      - ".dockerignore"
+      - "LICENSE"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 jobs:
@@ -32,8 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write
-      packages: write
     defaults:
       run:
         working-directory: src
@@ -45,24 +49,20 @@ jobs:
           fetch-depth: 0
 
       - name: Run build script
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+          IMAGE_TAG: sha-${{ github.sha }}
         run: ./build/build.sh
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Export tested image
+        if: github.event_name == 'push'
+        run: docker save ghcr.io/twistingmercury/mnemonic-api:sha-${{ github.sha }} --output "${RUNNER_TEMP}/mnemonic-api-image.tar"
 
-      - name: Push image tags
-        run: |
-          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev')
-          if [[ "${{ github.ref_name }}" == "main" ]]; then
-            docker push ghcr.io/twistingmercury/mnemonic-api:latest
-            docker push ghcr.io/twistingmercury/mnemonic-api:${VERSION}
-          else
-            docker tag ghcr.io/twistingmercury/mnemonic-api:latest ghcr.io/twistingmercury/mnemonic-api:latest-dev
-            docker tag ghcr.io/twistingmercury/mnemonic-api:${VERSION} ghcr.io/twistingmercury/mnemonic-api:${VERSION}-dev
-            docker push ghcr.io/twistingmercury/mnemonic-api:latest-dev
-            docker push ghcr.io/twistingmercury/mnemonic-api:${VERSION}-dev
-          fi
+      - name: Upload tested image artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnemonic-api-image-${{ github.sha }}
+          path: ${{ runner.temp }}/mnemonic-api-image.tar
+          if-no-files-found: error
+          retention-days: 1

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.2.1]
+
 ### Added
 
 - REST Admin API (port 8080) for pattern CRUD and semantic search operations
