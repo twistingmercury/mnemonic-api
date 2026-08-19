@@ -2,11 +2,13 @@
 # Stage 1: Run linters, formatters, security scanners, 
 # unit tests, then build binary
 #------------------------------------------------------------
-FROM ghcr.io/twistingmercury/golang-tooling:alpine AS build
+ARG BUILDPLATFORM
+FROM --platform=${BUILDPLATFORM} ghcr.io/twistingmercury/golang-tooling:latest AS build
 
-ENV CGO_ENABLED=0 \
-    GOARCH=amd64 \
-    GOOS=linux
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+ENV CGO_ENABLED=0
 
 ARG BUILD_VER=dev
 ARG BUILD_DATE=unknown
@@ -14,12 +16,12 @@ ARG BUILD_COMMIT=unknown
 
 WORKDIR /src
 
-COPY go.mod go.sum ./
+COPY src/go.mod src/go.sum ./
 RUN go mod download
-COPY . .
+COPY src/. .
 
 # Generate Swagger 2.0 docs (required before linters/build — routes.go imports the generated package)
-RUN go install github.com/swaggo/swag/cmd/swag@latest
+RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6
 RUN swag init -g cmd/main/main.go -o docs/swagger --parseInternal
 
 # Run linters, formatters, security scanners, etc
@@ -34,7 +36,8 @@ ARG LD_FLAGS="-s -w \
     -X 'github.com/twistingmercury/mnemonic-api/internal/version.buildDate=${BUILD_DATE}' \
     -X 'github.com/twistingmercury/mnemonic-api/internal/version.commit=${BUILD_COMMIT}'"
 
-RUN go build --ldflags "${LD_FLAGS}" -o /out/mnemonic-api cmd/main/main.go
+RUN GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build --ldflags "${LD_FLAGS}" -o /out/mnemonic-api ./cmd/main
 
 
 #------------------------------------------------------------
@@ -46,10 +49,10 @@ ARG BUILD_VER=dev
 ARG BUILD_DATE=unknown
 ARG BUILD_COMMIT=unknown
 
-LABEL org.opencontainers.image.title="mnemonic" \
-    org.opencontainers.image.description="Backend server providing routing and pattern retrieval via REST API for ACE CLI" \
+LABEL org.opencontainers.image.title="mnemonic-api" \
+    org.opencontainers.image.description="Admin REST API and read-only MCP server for reusable knowledge-graph patterns" \
     org.opencontainers.image.source="https://github.com/twistingmercury/mnemonic-api" \
-    org.opencontainers.image.licenses="MIT" \
+    org.opencontainers.image.licenses="Apache-2.0" \
     org.opencontainers.image.authors="Jeremy K. Johnson" \
     org.opencontainers.image.created="${BUILD_DATE}" \
     org.opencontainers.image.revision="${BUILD_COMMIT}" \
@@ -57,7 +60,13 @@ LABEL org.opencontainers.image.title="mnemonic" \
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /out/mnemonic-api /mnemonic-api
+COPY LICENSE /licenses/LICENSE
 
-EXPOSE 8080
+USER 65532:65532
+
+EXPOSE 8080 8081 9090
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/mnemonic-api", "--health"]
 
 ENTRYPOINT ["/mnemonic-api"]

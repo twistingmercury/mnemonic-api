@@ -48,7 +48,7 @@ services:
 
 # this is the testing target
   mnemonic_api:
-    image: ghcr.io/twistingmercury/mnemonic-api:latest
+    image: ${MNEMONIC_API_IMAGE:-ghcr.io/twistingmercury/mnemonic-api:latest}
     container_name: mnemonic_api
     environment:
       MNEMONIC_DATABASE_POSTGRES_HOST: postgres

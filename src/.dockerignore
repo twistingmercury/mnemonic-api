@@ -14,3 +14,5 @@
 **/Dockerfile
 **/.vscode
 **/.idea
+/main
+**/coverage.out
