@@ -1,4 +1,4 @@
-.PHONY: local build analyze tests-db tests-db-pattern tests-db-graph tests-unit tests-bench docs-swagger start stop help
+.PHONY: local build analyze tests-unit tests-bench docs-swagger start stop help
 
 GIT_COMMIT := $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 GIT_TAG    := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
@@ -15,14 +15,6 @@ analyze: ## Run linters, formatters, security scanners, etc
 	cd src && govulncheck ./cmd/... ./internal/...
 	cd src && gosec -quiet -exclude-dir=tests ./...
 
-tests-db: tests-db-pattern tests-db-graph ## Run all database integration tests
-
-tests-db-pattern: ## Run pattern repository integration tests
-	cd src && ./internal/repository/tests/run-pattern-integration-tests.sh
-
-tests-db-graph: ## Run graph repository integration tests
-	cd src && ./internal/repository/tests/run-graph-integration-tests.sh
-
 tests-unit: ## Run unit tests with coverage
 	cd src && go test ./internal/... -coverprofile=coverage.out
 	cd src && go tool cover -html=coverage.out
@@ -31,12 +23,12 @@ tests-bench: ## Run benchmark tests
 	cd src && go test ./internal/... -bench=. -benchmem -run=^$$
 
 docs-swagger: ## Generate Swagger 2.0 docs
-	cd src && go install github.com/swaggo/swag/cmd/swag@latest
+	cd src && go install github.com/swaggo/swag/cmd/swag@v1.16.6
 	cd src && swag init -g cmd/main/main.go -o docs/swagger --parseInternal
 
 start: ## Start mnemonic using the latest image via Docker Compose
 	@printf "Starting mnemonic..."
-	@docker compose -f ./docker-compose.yaml up -d > /dev/null 2>&1 || true
+	@docker compose -f ./docker-compose.yaml up -d
 	@printf "done\n"
 
 stop: ## Tear down mnemonic infrastructure started with 'make start'

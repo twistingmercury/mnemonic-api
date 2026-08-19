@@ -19,6 +19,8 @@ if [[ -z "${IMAGE_TAG:-}" ]]; then
         IMAGE_TAG="sha-${BUILD_COMMIT}"
     fi
 fi
+MNEMONIC_API_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+export MNEMONIC_API_IMAGE
 
 E2E_COMPOSE_FILE="${APP_ROOT}/tests/docker-compose.yaml"
 
@@ -67,9 +69,25 @@ e2e_tests() {
 
     docker compose -f "${E2E_COMPOSE_FILE}" up \
         --build \
+        --pull never \
         --abort-on-container-exit \
         --exit-code-from mnemonic_tests \
         mnemonic_api mnemonic_tests
+
+    local api_container_id expected_image_id tested_image_id
+    api_container_id="$(docker compose -f "${E2E_COMPOSE_FILE}" ps --all -q mnemonic_api)"
+    if [[ -z "${api_container_id}" ]]; then
+        printf "ERROR: E2E API container was not found after the test run\n" >&2
+        return 1
+    fi
+
+    expected_image_id="$(docker image inspect --format '{{.Id}}' "${MNEMONIC_API_IMAGE}")"
+    tested_image_id="$(docker inspect --format '{{.Image}}' "${api_container_id}")"
+    if [[ "${tested_image_id}" != "${expected_image_id}" ]]; then
+        printf "ERROR: E2E tested image %s, expected %s (%s)\n" \
+            "${tested_image_id}" "${expected_image_id}" "${MNEMONIC_API_IMAGE}" >&2
+        return 1
+    fi
 
     trap - EXIT
     cleanup

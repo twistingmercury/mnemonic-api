@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-08-19
+
+### Added
+
+- Local Docker Compose integration for the standalone enrichment service
+
+### Changed
+
+- Updated the Go toolchain and runtime dependencies
+- Hardened the Docker build and runtime image, including non-root execution and image metadata
+- Unified Docker-first CI so successful main and develop builds publish the image they tested
+- Removed obsolete standalone database-test Make targets in favor of the full E2E build gate
+- Cleaned Docker build contexts and removed obsolete generated artifacts
+
+### Fixed
+
+- Aligned local Compose services on shared database and RabbitMQ configuration
+- Made CI and E2E image selection deterministic and validated the supported Compose configurations
+
 ## [v0.2.1]
 
 ### Added
@@ -56,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI/CD workflows for automated testing and image publication
 - Comprehensive unit and integration tests with pgxmock for database isolation
 - Makefile targets for building, testing, and documentation generation
-- Swagger UI at `/swagger/index.html` with OpenAPI 3.0 specification
+- Swagger UI at `/swagger/index.html` with a Swagger 2.0 specification
 - Build script with cleanup traps for Docker Compose teardown
 
 ### Fixed
@@ -67,7 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Project extracted and refocused: REST Admin API only, removed routing engine and regex matching components
 - API version path structure: `/v1/api/` prefix for all endpoints
 - Server startup now initializes telemetry and observability middleware by default
 - Configuration validation includes log level and timeout validation with fail-fast error reporting

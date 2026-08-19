@@ -1,7 +1,7 @@
 # mnemonic-api
 
 > **Maturity Level**: Emerging - interfaces and local workflows are still evolving
-> **Version**: v0.2.1
+> **Version**: v0.3.1
 
 ---
 
@@ -86,7 +86,7 @@ make build
 make start
 ```
 
-`make start` launches the root [Docker Compose stack](docker-compose.yaml). Its application services require locally built images (`pull_policy: never`), including the companion `ghcr.io/twistingmercury/mnemonic:latest-dev` image, and publish mnemonic-api at `http://localhost:3000`. `make stop` removes the Compose volumes, deletes the local `migrate/migrate:latest` image, and prunes unused Docker data.
+`make start` launches the root [Docker Compose stack](docker-compose.yaml) and publishes mnemonic-api at `http://localhost:3000`. The `dev_api` service requires the locally built mnemonic-api image (`pull_policy: never`); `dev_mcp` and `dev_enricher` use normal registry behavior. `make stop` removes the Compose volumes, deletes the local `migrate/migrate:latest` image, and prunes unused Docker data.
 
 ### Configuration
 
@@ -100,12 +100,11 @@ The root Makefile provides the supported test entry points:
 
 ```bash
 make tests-unit       # Unit tests with coverage
-make tests-db         # PostgreSQL and Neo4j repository integration tests
 make tests-bench      # Internal package benchmarks
 make build            # Image build plus the full E2E suite
 ```
 
-Database integration and E2E tests require Docker.
+The E2E suite uses the pre-migrated PostgreSQL and Neo4j images and requires Docker.
 
 ### API documentation
 
