@@ -83,4 +83,5 @@ src/mnemonic/docs/swagger/
 /_archive/
 /_reviews/
 **/_code-reviews/
+docs/code_reviews/push_readiness_*.md
 **/_draft-skills/
