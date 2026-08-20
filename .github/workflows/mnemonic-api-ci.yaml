@@ -1,4 +1,4 @@
-name: Mnemonic CI
+name: Mnemonic-API CI
 
 on:
   push:
@@ -18,7 +18,7 @@ on:
       - "Makefile"
       - "docker-compose.yaml"
       - "LICENSE"
-      - ".github/workflows/mnemonic-ci.yaml"
+      - ".github/workflows/mnemonic-api-ci.yaml"
   pull_request:
     branches:
       - main
@@ -36,7 +36,7 @@ on:
       - "Makefile"
       - "docker-compose.yaml"
       - "LICENSE"
-      - ".github/workflows/mnemonic-ci.yaml"
+      - ".github/workflows/mnemonic-api-ci.yaml"
   workflow_dispatch:
 
 jobs:
