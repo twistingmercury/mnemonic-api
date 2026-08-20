@@ -63,7 +63,6 @@ jobs:
       - name: Run build script
         env:
           BUILD_COMMIT: ${{ github.sha }}
-          IMAGE_TAG: sha-${{ github.sha }}
         run: ./build/build.sh
 
       - name: Log in to GitHub Container Registry
@@ -80,8 +79,8 @@ jobs:
             docker push ghcr.io/twistingmercury/mnemonic-api:latest
             docker push ghcr.io/twistingmercury/mnemonic-api:${VERSION}
           else
-            docker tag ghcr.io/twistingmercury/mnemonic-api:latest ghcr.io/twistingmercury/mnemonic:latest-dev
-            docker tag ghcr.io/twistingmercury/mnemonic-api:${VERSION} ghcr.io/twistingmercury/mnemonic:${VERSION}-dev
+            docker tag ghcr.io/twistingmercury/mnemonic-api:latest ghcr.io/twistingmercury/mnemonic-api:latest-dev
+            docker tag ghcr.io/twistingmercury/mnemonic-api:${VERSION} ghcr.io/twistingmercury/mnemonic-api:${VERSION}-dev
             docker push ghcr.io/twistingmercury/mnemonic-api:latest-dev
             docker push ghcr.io/twistingmercury/mnemonic-api:${VERSION}-dev
           fi
