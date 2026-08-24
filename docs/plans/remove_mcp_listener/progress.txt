@@ -9,3 +9,9 @@ Date: 2026-08-24
 Summary: Removed MCP dependency construction, the MCP listener errgroup task, MCP shutdown handling, and MCP-specific startup logging from the API server. Dependency wiring now returns only REST services and the queue publisher; added server-level regression coverage.
 Verification: `cd src && go test ./internal/server`, `cd src && go test -race ./internal/server`, and `make build` passed (including Docker API E2E).
 Follow-up: Cycle 3 removes the now-unused API MCP configuration contract.
+
+Cycle 4 - Remove MCP implementation dependency
+Date: 2026-08-24
+Summary: Removed the API-local MCP implementation and its tests, removed the Model Context Protocol SDK and unused transitive module requirements, and updated service comments to describe REST-only responsibilities.
+Verification: `cd src && go test ./internal/service/...`, `cd src && go test ./internal/server`, and `make build` passed (including Docker API E2E).
+Follow-up: Cycle 5 aligns deployment metadata and source-of-truth documentation.

@@ -74,7 +74,7 @@ Make `mnemonic-api` an Admin REST API only. It must not construct, configure, li
   - Verify: `cd mnemonic-api && make build`
   - Done: The full build passes and `rg -n 'MCPConfig|mcp\\.' mnemonic-api/src/internal/config` returns no matches.
 
-- [ ] **Cycle 4 - Remove MCP implementation dependency**: Remove the API-local MCP package, its tests, and its direct Go SDK dependency.
+- [x] **Cycle 4 - Remove MCP implementation dependency**: Remove the API-local MCP package, its tests, and its direct Go SDK dependency.
   - Agent: `go_software_engineer`
   - Files: `src/internal/mcpserver/`, `src/go.mod`, `src/go.sum`, `src/internal/service/doc.go`, `src/internal/service/search/service.go`
   - Steps:
