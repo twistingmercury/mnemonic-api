@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,7 +19,6 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/database"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/operations"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
-	"github.com/twistingmercury/mnemonic-api/internal/mcpserver"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
@@ -37,8 +35,8 @@ import (
 
 // ListenAndServe starts the mnemonic server. It initializes telemetry,
 // establishes database connections, wires all dependencies, and runs the
-// Admin API and MCP server concurrently. It blocks until a shutdown signal
-// is received or a component returns a fatal error.
+// Admin API. It blocks until a shutdown signal is received or the server
+// returns a fatal error.
 func ListenAndServe(cfg *config.MnemonicConfig) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -59,7 +57,6 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	logger.Info().
 		Str("host", cfg.Server.Host).
 		Int("admin_port", cfg.Server.Port).
-		Int("mcp_port", cfg.MCP.Port).
 		Bool("metrics_enabled", cfg.Observability.Metrics.Enabled).
 		Bool("tracing_enabled", cfg.Observability.Tracing.Enabled).
 		Msg("mnemonic starting")
@@ -80,7 +77,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	}
 
 	// Wire all dependencies.
-	svc, toolDeps, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"))
+	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"))
 	if err != nil {
 		return fmt.Errorf("failed to wire dependencies: %w", err)
 	}
@@ -104,20 +101,11 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	// Build the Admin API HTTP server.
 	adminServer := CreateHTTPServer(router, cfg)
 
-	// Build the MCP HTTP server.
-	mcpSrv := mcpserver.NewMCPServer(toolDeps, logger, cfg.MCP)
-	mcpHandler := mcpserver.NewMCPHTTPHandler(mcpSrv)
-	mcpHTTPServer := mcpserver.NewMCPHTTPServer(cfg.MCP, cfg.Server.Host, mcpHandler)
-
-	// Run all components concurrently.
+	// Run the Admin API.
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
 		return runHTTPServer(gCtx, adminServer, cfg, logger, "admin_api")
-	})
-
-	g.Go(func() error {
-		return runMCPServer(gCtx, mcpHTTPServer, logger)
 	})
 
 	// Wait for shutdown signal or component failure.
@@ -170,14 +158,14 @@ func closeDatabases(pgPool *pgxpool.Pool, neo4jDriver neo4j.DriverWithContext, l
 }
 
 // wireDependencies creates all repositories, services, and the RabbitMQ
-// publisher. Returns the route Services, MCP ToolDependencies, and Publisher.
+// publisher. Returns the route Services and Publisher.
 func wireDependencies(
 	pgPool *pgxpool.Pool,
 	neo4jDriver neo4j.DriverWithContext,
 	cfg *config.MnemonicConfig,
 	logger zerolog.Logger,
 	meter metric.Meter,
-) (Services, mcpserver.ToolDependencies, queue.Publisher, error) {
+) (Services, queue.Publisher, error) {
 	// Repositories.
 	patternRepo := patternrepo.NewRepository(pgPool)
 	enrichmentJobRepo := enrichmentjobrepo.NewRepository(pgPool)
@@ -198,15 +186,12 @@ func wireDependencies(
 		ReconnectDelay: cfg.Queue.RabbitMQ.ReconnectDelay,
 	}, meter)
 	if err != nil {
-		return Services{}, nil, nil, fmt.Errorf("wire publisher: %w", err)
+		return Services{}, nil, fmt.Errorf("wire publisher: %w", err)
 	}
 
 	// Domain services.
 	searchSvc := searchsvc.New(embeddingSvc, chunkRepo, logger)
 	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, pgPool, chunkRepo, pub, logger)
-
-	// MCP facade.
-	toolDeps := mcpserver.NewToolDependencies(searchSvc, patternSvc)
 
 	// REST API services.
 	svc := Services{
@@ -214,7 +199,7 @@ func wireDependencies(
 		Search:  searchSvc,
 	}
 
-	return svc, toolDeps, pub, nil
+	return svc, pub, nil
 }
 
 // runHTTPServer starts the admin API HTTP server and gracefully shuts it down
@@ -255,44 +240,6 @@ func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicCo
 	}
 	return nil
 }
-
-// runMCPServer starts the MCP HTTP server and gracefully shuts it down when
-// the context is cancelled.
-func runMCPServer(ctx context.Context, srv *http.Server, logger zerolog.Logger) error {
-	errCh := make(chan error, 1)
-
-	go func() {
-		logger.Info().
-			Str("addr", srv.Addr).
-			Str("component", "mcp").
-			Msg("MCP server listening")
-
-		err := srv.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("mcp server error: %w", err)
-		}
-		close(errCh)
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-	}
-
-	// Use a fixed 5s timeout for MCP shutdown; it has no long-running requests.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), mcpShutdownTimeout)
-	defer cancel()
-
-	logger.Info().Str("component", "mcp").Msg("shutting down MCP server")
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("mcp shutdown error: %w", err)
-	}
-	return nil
-}
-
-// mcpShutdownTimeout is the grace period for MCP server shutdown.
-const mcpShutdownTimeout = 5 * time.Second
 
 // setupRouter creates and configures the Gin router with middleware.
 func setupRouter(tel *telemetry.Telemetry, requestMetrics *middleware.RequestMetrics) *gin.Engine {
