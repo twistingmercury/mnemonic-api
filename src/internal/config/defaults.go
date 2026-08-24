@@ -13,15 +13,6 @@ const (
 	DefaultServerTLSEnabled      = false
 )
 
-// Default values for MCP server configuration
-const (
-	DefaultMCPPort                   = 8081
-	DefaultMCPReadTimeout            = 30 * time.Second
-	DefaultMCPWriteTimeout           = 30 * time.Second
-	DefaultMCPIdleTimeout            = 120 * time.Second
-	DefaultMCPDefaultSearchThreshold = 0.5
-)
-
 // Default values for PostgreSQL configuration
 const (
 	DefaultPostgresHost            = "localhost"
