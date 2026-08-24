@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- API-local MCP listener and MCP integration-test ownership; `mnemonic-mcp` exclusively serves MCP.
+- The embedded MCP listener, its API configuration, and the API-local MCP implementation dependency.
+- API-owned MCP integration tests and test-stack wiring; `mnemonic-mcp` exclusively serves MCP.
 
 ## [v0.3.1] - 2026-08-19
 

@@ -1,7 +1,7 @@
 # mnemonic-api
 
 > **Maturity Level**: Emerging - interfaces and local workflows are still evolving
-> **Version**: v0.3.1
+> **Version**: v0.3.3
 
 ---
 
@@ -20,7 +20,7 @@
 
 ## Usage
 
-Mnemonic-api manages reusable knowledge-graph patterns through an Admin REST API. The separate `mnemonic-mcp` service exclusively serves the read-only Model Context Protocol (MCP) interface.
+Mnemonic-api manages reusable knowledge-graph patterns through an Admin REST API. It does not expose an MCP endpoint or listener; the separate `mnemonic-mcp` service exclusively serves the read-only Model Context Protocol (MCP) interface.
 
 With the service running directly on its default ports, create and search patterns through the REST API:
 
@@ -46,7 +46,7 @@ The generated [Swagger 2.0 specification](src/docs/swagger/swagger.yaml) documen
 
 ## How it works
 
-The Go process runs the REST API on port 8080. It connects to PostgreSQL with PGVector for pattern and chunk storage, Neo4j for graph relationships, RabbitMQ for enrichment jobs, and OpenAI for query embeddings.
+The Go process runs only the REST API on port 8080. It connects to PostgreSQL with PGVector for pattern and chunk storage, Neo4j for graph relationships, RabbitMQ for enrichment jobs, and OpenAI for query embeddings.
 
 - Pattern mutations are handled by the REST API under `/v1/api/patterns`.
 - Semantic searches embed the query and rank enriched pattern chunks by vector similarity.
@@ -91,7 +91,7 @@ make start
 
 Configuration precedence is built-in defaults, an optional YAML file, then `MNEMONIC_` environment variables. Set `MNEMONIC_CONFIG_FILE` to choose a file explicitly; otherwise the service checks `/etc/mnemonic/config.yaml` and `./config.yaml`.
 
-Nested keys use underscores in environment variables. For example, `server.port` becomes `MNEMONIC_SERVER_PORT`, and the OpenAI credential is `MNEMONIC_OPENAI_API_KEY`.
+Nested keys use underscores in environment variables. For example, `server.port` becomes `MNEMONIC_SERVER_PORT`, and the OpenAI credential is `MNEMONIC_OPENAI_API_KEY`. This API has no `mcp.*` configuration; MCP settings belong to `mnemonic-mcp`.
 
 ### Testing
 
