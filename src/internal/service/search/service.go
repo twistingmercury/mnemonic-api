@@ -1,5 +1,5 @@
 // Package search provides semantic similarity search over pattern chunks.
-// Both the REST search endpoint and the MCP search_patterns tool use this service.
+// The REST search endpoint uses this service.
 // It coordinates between the embedding service (for query vectorization) and the
 // chunk repository (for pgvector similarity search).
 package search
