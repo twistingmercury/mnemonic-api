@@ -1,7 +1,10 @@
 package api_test
 
 import (
+	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -24,6 +27,48 @@ func metricsBaseURL() string {
 		return url
 	}
 	return "http://localhost:9090"
+}
+
+// TestAPIOnlyNetworkBoundary verifies that mnemonic-api exposes no MCP surface.
+// MCP is owned by mnemonic-mcp, so the API listener must not route /mcp and the
+// former MCP port must reject TCP connections from another container.
+func TestAPIOnlyNetworkBoundary(t *testing.T) {
+	client := helpers.NewUnauthenticatedClient(t)
+
+	resp, err := client.Get("/mcp")
+	if err != nil {
+		t.Fatalf("failed to GET /mcp: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected /mcp to be unavailable with status 404, got %d", resp.StatusCode)
+	}
+
+	apiURL, err := url.Parse(client.BaseURL)
+	if err != nil {
+		t.Fatalf("parse API URL %q: %v", client.BaseURL, err)
+	}
+
+	mcpAddress := net.JoinHostPort(apiURL.Hostname(), "8081")
+	conn, err := net.DialTimeout("tcp", mcpAddress, 2*time.Second)
+	if err == nil {
+		conn.Close()
+		t.Fatalf("expected MCP port %s to reject connections", mcpAddress)
+	}
+
+	if !isExpectedConnectionFailure(err) {
+		t.Fatalf("expected MCP port %s to be unavailable, got: %v", mcpAddress, err)
+	}
+}
+
+func isExpectedConnectionFailure(err error) bool {
+	var netErr net.Error
+	if !strings.Contains(err.Error(), "connection refused") &&
+		(!errors.As(err, &netErr) || !netErr.Timeout()) {
+		return false
+	}
+	return true
 }
 
 // -----------------------------------------------------------------------------
