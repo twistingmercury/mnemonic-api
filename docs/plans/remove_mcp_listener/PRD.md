@@ -53,7 +53,7 @@ Make `mnemonic-api` an Admin REST API only. It must not construct, configure, li
   - Verify: `cd mnemonic-api && make build && cd ../mnemonic-mcp && make build`
   - Done: Both full builds pass; API E2E has no MCP URL/configuration or MCP test package.
 
-- [ ] **Cycle 2 - Stop API MCP serving**: Remove MCP construction and listener startup from the API server while retaining the Admin API lifecycle.
+- [x] **Cycle 2 - Stop API MCP serving**: Remove MCP construction and listener startup from the API server while retaining the Admin API lifecycle.
   - Agent: `go_software_engineer`
   - Files: `src/internal/server/server.go`, `src/internal/server/server_test.go`
   - Steps:
