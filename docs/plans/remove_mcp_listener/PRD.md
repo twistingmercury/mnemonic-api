@@ -84,7 +84,7 @@ Make `mnemonic-api` an Admin REST API only. It must not construct, configure, li
   - Verify: `cd mnemonic-api && make build`
   - Done: The full build passes, `go.mod` has no Model Context Protocol SDK dependency, and no API production package imports `internal/mcpserver`.
 
-- [ ] **Cycle 5 - Align deployment and documentation**: Remove API MCP claims from deployment metadata and record `mnemonic-mcp` as the sole owner in source-of-truth documentation.
+- [x] **Cycle 5 - Align deployment and documentation**: Remove API MCP claims from deployment metadata and record `mnemonic-mcp` as the sole owner in source-of-truth documentation.
   - Agent: `technical_writer`
   - Files: `mnemonic-api/README.md`, `mnemonic-api/src/build/Dockerfile`, `mnemonic-api/CHANGELOG.md`, `mnemonic-docs/README.md`, `mnemonic-docs/docs/architecture/system/02-system-architecture.md`, `mnemonic-docs/docs/code_reviews/cross_repository_sot_audit_v01.md`
   - Steps:

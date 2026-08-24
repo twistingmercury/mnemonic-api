@@ -15,3 +15,9 @@ Date: 2026-08-24
 Summary: Removed the API-local MCP implementation and its tests, removed the Model Context Protocol SDK and unused transitive module requirements, and updated service comments to describe REST-only responsibilities.
 Verification: `cd src && go test ./internal/service/...`, `cd src && go test ./internal/server`, and `make build` passed (including Docker API E2E).
 Follow-up: Cycle 5 aligns deployment metadata and source-of-truth documentation.
+
+Cycle 5 - Align deployment and documentation
+Date: 2026-08-24
+Summary: Removed API MCP/port-8081 claims from deployment metadata and documentation, documented `mnemonic-mcp` as the sole MCP service, and reconciled the cross-repository duplicate-MCP audit finding.
+Verification: `cd mnemonic-api && make build && git -C mnemonic-api diff --check && git -C mnemonic-docs diff --check` passed.
+Follow-up: Cycle 6 proves the API-only network boundary through Docker E2E coverage.
