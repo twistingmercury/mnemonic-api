@@ -83,5 +83,8 @@ src/mnemonic/docs/swagger/
 /_archive/
 /_reviews/
 **/_code-reviews/
-docs/code_reviews/push_readiness_*.md
+docs/code_reviews/
+# Local Ralph-loop planning inputs
+docs/plans/**/PRD.md
+docs/plans/**/PROMPT.md
 **/_draft-skills/

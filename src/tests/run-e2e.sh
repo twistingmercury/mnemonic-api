@@ -11,7 +11,6 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
     exit 1
 fi
 API_URL="http://localhost:3000"
-MCP_URL="http://localhost:8091"
 METRICS_URL="http://localhost:9091"
 MAX_RETRIES=30
 TARGET="${TARGET:-ALL}"
@@ -49,7 +48,6 @@ echo ""
 
 cd "${SCRIPT_DIR}/e2e"
 export API_URL="${API_URL}" 
-export MCP_URL="${MCP_URL}" 
 export METRICS_URL="${METRICS_URL}"
 
 go test -v ./...
