@@ -1,0 +1,5 @@
+Cycle 1 - Remove API MCP E2E ownership
+Date: 2026-08-24
+Summary: Removed the API-owned MCP E2E package, compose/test MCP configuration, and MCP-only test helpers and types. Confirmed mnemonic-mcp retains the canonical MCP protocol E2E suite.
+Verification: `cd mnemonic-api && make build && cd ../mnemonic-mcp && make build` passed.
+Follow-up: Cycle 2 removes the API runtime MCP listener.
