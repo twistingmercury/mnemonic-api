@@ -94,7 +94,7 @@ Make `mnemonic-api` an Admin REST API only. It must not construct, configure, li
   - Verify: `cd mnemonic-api && make build && git -C mnemonic-api diff --check && git -C mnemonic-docs diff --check`
   - Done: The API full build and both whitespace checks pass; no API documentation claims that it serves MCP.
 
-- [ ] **Cycle 6 - Prove the API-only network boundary**: Run the final API verification and confirm no API MCP listener remains.
+- [x] **Cycle 6 - Prove the API-only network boundary**: Run the final API verification and confirm no API MCP listener remains.
   - Agent: `go_e2e_test_engineer`
   - Files: `mnemonic-api/src/tests/docker-compose.yaml`, `mnemonic-api/src/tests/run-e2e.sh`, `mnemonic-api/src/tests/e2e/api/`
   - Steps:
