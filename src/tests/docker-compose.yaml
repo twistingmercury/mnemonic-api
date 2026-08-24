@@ -57,7 +57,6 @@ services:
       MNEMONIC_DATABASE_NEO4J_URI: bolt://neo4j:7687
       MNEMONIC_DATABASE_NEO4J_PASSWORD: mnemonic_dev
       MNEMONIC_OPENAI_API_KEY: sk-test-dummy
-      MNEMONIC_MCP_PORT: 8081
       MNEMONIC_LOGGING_LEVEL: error
       MNEMONIC_QUEUE_RABBITMQ_HOST: rabbitmq
       MNEMONIC_QUEUE_RABBITMQ_USER: mnemonic
@@ -84,7 +83,6 @@ services:
     container_name: mnemonic_tests
     environment:
       - API_URL=http://mnemonic_api:8080
-      - MCP_URL=http://mnemonic_api:8081
       - METRICS_URL=http://mnemonic_api:9090
     depends_on:
       mnemonic_api:
