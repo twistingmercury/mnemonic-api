@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- API-local MCP listener and MCP integration-test ownership; `mnemonic-mcp` exclusively serves MCP.
+
 ## [v0.3.1] - 2026-08-19
 
 ### Added
@@ -34,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pattern enrichment pipeline: automatic embedding generation and concept extraction via OpenAI LLM
 - PostgreSQL data persistence with PGVector support for vector similarity search
 - Neo4j backing store for pattern concept relationships and graph traversal
-- MCP server (port 8081) for Claude Code integration with read-only pattern search capability
+- API-local MCP serving; MCP protocol serving is owned by `mnemonic-mcp`
 - OpenTelemetry observability: distributed tracing, metrics collection, and structured logging
 - Gin HTTP server framework with middleware for tracing and request metrics
 - Configuration management (`internal/config`): layered loading from defaults, files, and environment variables
@@ -70,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker multi-stage build for optimized image size
 - E2E test suite via Docker Compose:
   - Tests for all API endpoints (agents, skills, skill files, patterns, enrichment operations)
-  - MCP server integration tests
+  - REST API integration tests
   - Database and dependency initialization
 - GitHub Actions CI/CD workflows for automated testing and image publication
 - Comprehensive unit and integration tests with pgxmock for database isolation

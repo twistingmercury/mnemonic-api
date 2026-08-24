@@ -50,7 +50,7 @@ ARG BUILD_DATE=unknown
 ARG BUILD_COMMIT=unknown
 
 LABEL org.opencontainers.image.title="mnemonic-api" \
-    org.opencontainers.image.description="Admin REST API and read-only MCP server for reusable knowledge-graph patterns" \
+    org.opencontainers.image.description="Admin REST API for reusable knowledge-graph patterns" \
     org.opencontainers.image.source="https://github.com/twistingmercury/mnemonic-api" \
     org.opencontainers.image.licenses="Apache-2.0" \
     org.opencontainers.image.authors="Jeremy K. Johnson" \
@@ -64,7 +64,7 @@ COPY LICENSE /licenses/LICENSE
 
 USER 65532:65532
 
-EXPOSE 8080 8081 9090
+EXPOSE 8080 9090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/mnemonic-api", "--health"]

@@ -20,7 +20,7 @@
 
 ## Usage
 
-Mnemonic-api manages reusable knowledge-graph patterns through an Admin REST API and exposes read-only pattern retrieval through the Model Context Protocol (MCP).
+Mnemonic-api manages reusable knowledge-graph patterns through an Admin REST API. The separate `mnemonic-mcp` service exclusively serves the read-only Model Context Protocol (MCP) interface.
 
 With the service running directly on its default ports, create and search patterns through the REST API:
 
@@ -42,23 +42,22 @@ curl --get http://localhost:8080/v1/api/patterns/search \
   --data-urlencode "limit=5"
 ```
 
-The generated [Swagger 2.0 specification](src/docs/swagger/swagger.yaml) documents the complete REST API. Swagger UI is available at `http://localhost:8080/swagger/index.html`. The MCP endpoint is `http://localhost:8081/mcp`.
+The generated [Swagger 2.0 specification](src/docs/swagger/swagger.yaml) documents the complete REST API. Swagger UI is available at `http://localhost:8080/swagger/index.html`.
 
 ## How it works
 
-The Go process runs the REST API on port 8080 and a stateless MCP server on port 8081. It connects to PostgreSQL with PGVector for pattern and chunk storage, Neo4j for graph relationships, RabbitMQ for enrichment jobs, and OpenAI for query embeddings.
+The Go process runs the REST API on port 8080. It connects to PostgreSQL with PGVector for pattern and chunk storage, Neo4j for graph relationships, RabbitMQ for enrichment jobs, and OpenAI for query embeddings.
 
 - Pattern mutations are handled by the REST API under `/v1/api/patterns`.
 - Semantic searches embed the query and rank enriched pattern chunks by vector similarity.
-- The MCP server provides `search_patterns`, `find_related_patterns`, and `get_pattern` as read-only tools.
 - Health is exposed at `/health`; Prometheus metrics use a separate listener on port 9090 by default.
 
 ## Key Considerations
 
-- The current deployment model assumes a trusted environment and does not authenticate REST or MCP requests.
+- The current API deployment model assumes a trusted environment and does not authenticate REST requests.
 - Pattern creation is asynchronous and returns `202 Accepted`; semantic results become available after enrichment completes.
 - PostgreSQL, Neo4j, RabbitMQ, and an OpenAI API key are required for a working runtime.
-- Direct execution uses ports 8080, 8081, and 9090. The root Docker Compose stack publishes the Admin API on port 3000; port 8091 belongs to its separate `dev_mcp` service rather than mnemonic-api's MCP listener.
+- Direct execution uses ports 8080 and 9090. The root Docker Compose stack publishes the Admin API on port 3000; the separate `dev_mcp` service owns its MCP listener.
 - Configuration and API contracts may change while the project remains at the Emerging maturity level.
 
 ## Development Considerations
