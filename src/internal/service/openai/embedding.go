@@ -52,14 +52,6 @@ func NewEmbeddingService(cfg config.OpenAIConfig) EmbeddingService {
 	}
 }
 
-// newEmbeddingServiceWithURL creates an EmbeddingService pointing at a custom URL.
-// This is used for testing with httptest servers.
-func newEmbeddingServiceWithURL(cfg config.OpenAIConfig, baseURL string) EmbeddingService {
-	svc := NewEmbeddingService(cfg).(*openaiEmbedding)
-	svc.baseURL = baseURL
-	return svc
-}
-
 // embeddingRequest is the OpenAI embeddings API request body.
 type embeddingRequest struct {
 	Input      string `json:"input"`

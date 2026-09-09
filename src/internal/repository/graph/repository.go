@@ -86,18 +86,6 @@ func NewRepository(driver neo4j.DriverWithContext, database string) Repository {
 	return r
 }
 
-// newRepositoryWithFactory creates a new Repository with a custom SessionFactory
-// and an optional health check function. This is used for unit testing with mocked sessions.
-func newRepositoryWithFactory(factory SessionFactory, healthCheckFn func(ctx context.Context) error) Repository {
-	if healthCheckFn == nil {
-		healthCheckFn = func(_ context.Context) error { return nil }
-	}
-	return &neo4jRepository{
-		factory:       factory,
-		healthCheckFn: healthCheckFn,
-	}
-}
-
 // neo4jSessionAdapter wraps a neo4j.SessionWithContext to satisfy SessionExecutor.
 type neo4jSessionAdapter struct {
 	session neo4j.SessionWithContext
