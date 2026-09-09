@@ -1,7 +1,7 @@
 # mnemonic-api
 
 > **Maturity Level**: Emerging - interfaces and local workflows are still evolving
-> **Version**: v0.3.3
+> **Version**: v0.3.4
 
 ---
 
@@ -64,7 +64,7 @@ The Go process runs only the REST API on port 8080. It connects to PostgreSQL wi
 
 ### Quick Start
 
-Prerequisites are Go 1.26.6, Docker, Docker Compose v2, and Git.
+Prerequisites are Go 1.27.1, Docker, Docker Compose v2, and Git.
 
 ```bash
 git clone https://github.com/twistingmercury/mnemonic-api.git
@@ -104,6 +104,8 @@ make build            # Image build plus the full E2E suite
 ```
 
 The E2E suite uses the pre-migrated PostgreSQL and Neo4j images and requires Docker.
+
+The [golangci-lint configuration](src/.golangci.yml) sets `run.tests: false` to exclude `*_test.go` files from lint analysis. `go test` still compiles and runs those tests. Keep `pgx` at 5.10.0 for compatibility with `pgxmock` 4.9.0; `pgx` 5.11.0 requires a `TypeMap` method that this mock version does not implement.
 
 ### API documentation
 

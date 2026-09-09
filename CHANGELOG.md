@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.4] - 2026-09-09
+
+### Changed
+
+- Updated the API and E2E Go modules and Docker build images to Go 1.27.1.
+- Updated runtime and development dependencies.
+
+### Fixed
+
+- Disabled test analysis in golangci-lint with `run.tests: false`; unit tests remain covered by `go test`.
+- Moved graph repository and OpenAI embedding test constructors into `export_test.go` so production lint analysis excludes test-only helpers.
+- Retained `pgx` 5.10.0 for compatibility with `pgxmock` 4.9.0, which lacks the `TypeMap` method required by `pgx` 5.11.0.
+
 ## [v0.3.3] 2026-08-24
 
 ### Removed
