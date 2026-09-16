@@ -17,7 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
-	"github.com/twistingmercury/mnemonic-api/internal/database"
+	"github.com/twistingmercury/mnemonic-api/internal/database/graphdb"
+	"github.com/twistingmercury/mnemonic-api/internal/database/vectordb"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/operations"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
@@ -125,7 +126,7 @@ func openDatabases(ctx context.Context, cfg *config.MnemonicConfig, logger zerol
 		Str("dsn", cfg.Database.Postgres.SafeDSN()).
 		Msg("connecting to PostgreSQL")
 
-	pgPool, err := database.NewPostgresPool(ctx, cfg.Database.Postgres)
+	pgPool, err := vectordb.NewPostgresPool(ctx, cfg.Database.Postgres)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
@@ -136,7 +137,7 @@ func openDatabases(ctx context.Context, cfg *config.MnemonicConfig, logger zerol
 		Str("database", cfg.Database.Neo4j.Database).
 		Msg("connecting to Neo4j")
 
-	neo4jDriver, err := database.NewNeo4jDriver(ctx, cfg.Database.Neo4j)
+	neo4jDriver, err := graphdb.NewNeo4jDriver(ctx, cfg.Database.Neo4j)
 	if err != nil {
 		pgPool.Close()
 		return nil, nil, fmt.Errorf("failed to connect to Neo4j: %w", err)
