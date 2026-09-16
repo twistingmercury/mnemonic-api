@@ -82,6 +82,7 @@ src/mnemonic/docs/swagger/
 /_ideas/
 /_archive/
 /_reviews/
+**/local/
 **/_code-reviews/
 docs/code_reviews/
 # Local Ralph-loop planning inputs

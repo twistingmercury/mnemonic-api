@@ -2,7 +2,6 @@ package middleware_test
 
 import (
 	"context"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -10,218 +9,104 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-func TestNewRequestMetrics(t *testing.T) {
+func TestRequestMetrics(t *testing.T) {
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	rm, err := middleware.NewRequestMetrics(meter)
+	t.Cleanup(func() { require.NoError(t, provider.Shutdown(context.Background())) })
+	rm, err := middleware.NewRequestMetrics(provider.Meter("test"))
 	require.NoError(t, err)
-	assert.NotNil(t, rm)
-}
-
-func TestRequestMetricsMiddleware(t *testing.T) {
-	reader := metric.NewManualReader()
-	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	rm, err := middleware.NewRequestMetrics(meter)
-	require.NoError(t, err)
-
+	require.NotNil(t, rm)
 	router := gin.New()
-	router.Use(rm.Middleware())
-	router.GET("/test", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Collect metrics
-	var data metricdata.ResourceMetrics
-	err = reader.Collect(context.Background(), &data)
-	require.NoError(t, err)
-
-	// Verify metrics were recorded
-	assert.NotEmpty(t, data.ScopeMetrics)
-}
-
-func TestRequestMetricsMiddlewareRecordsStatusCode(t *testing.T) {
-	reader := metric.NewManualReader()
-	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	rm, err := middleware.NewRequestMetrics(meter)
-	require.NoError(t, err)
-
-	router := gin.New()
-	router.Use(rm.Middleware())
-	router.GET("/success", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-	router.GET("/notfound", func(c *gin.Context) {
-		c.Status(http.StatusNotFound)
-	})
-	router.GET("/error", func(c *gin.Context) {
-		c.Status(http.StatusInternalServerError)
-	})
-
-	// Test success
-	req := httptest.NewRequest(http.MethodGet, "/success", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Test not found
-	req = httptest.NewRequest(http.MethodGet, "/notfound", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-
-	// Test error
-	req = httptest.NewRequest(http.MethodGet, "/error", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-
-	// Collect and verify metrics
-	var data metricdata.ResourceMetrics
-	err = reader.Collect(context.Background(), &data)
-	require.NoError(t, err)
-	assert.NotEmpty(t, data.ScopeMetrics)
-}
-
-func TestRequestMetricsMiddlewareWithSkipPaths(t *testing.T) {
-	reader := metric.NewManualReader()
-	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	rm, err := middleware.NewRequestMetrics(meter)
-	require.NoError(t, err)
-
-	skipPaths := []string{"/health", "/metrics"}
-
-	router := gin.New()
-	router.Use(rm.MiddlewareWithSkipPaths(skipPaths))
-	router.GET("/health", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-	router.GET("/metrics", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-	router.GET("/api/test", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	// Call health - should be skipped
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Call metrics - should be skipped
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Collect metrics before API call
-	var dataBeforeAPI metricdata.ResourceMetrics
-	err = reader.Collect(context.Background(), &dataBeforeAPI)
-	require.NoError(t, err)
-
-	// Count metrics before API call
-	metricCountBefore := countMetricDataPoints(dataBeforeAPI)
-
-	// Call API - should NOT be skipped
-	req = httptest.NewRequest(http.MethodGet, "/api/test", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Collect metrics after API call
-	var dataAfterAPI metricdata.ResourceMetrics
-	err = reader.Collect(context.Background(), &dataAfterAPI)
-	require.NoError(t, err)
-
-	metricCountAfter := countMetricDataPoints(dataAfterAPI)
-
-	// Verify metrics were recorded for API call (count should increase)
-	assert.Greater(t, metricCountAfter, metricCountBefore)
-}
-
-func TestRequestMetricsRecordsHTTPMethod(t *testing.T) {
-	reader := metric.NewManualReader()
-	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	rm, err := middleware.NewRequestMetrics(meter)
-	require.NoError(t, err)
-
-	router := gin.New()
-	router.Use(rm.Middleware())
-	router.POST("/test", func(c *gin.Context) {
-		c.Status(http.StatusCreated)
-	})
-	router.PUT("/test", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-	router.DELETE("/test", func(c *gin.Context) {
-		c.Status(http.StatusNoContent)
-	})
-
-	// Test POST
-	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusCreated, w.Code)
-
-	// Test PUT
-	req = httptest.NewRequest(http.MethodPut, "/test", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Test DELETE
-	req = httptest.NewRequest(http.MethodDelete, "/test", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusNoContent, w.Code)
-
-	// Collect and verify
-	var data metricdata.ResourceMetrics
-	err = reader.Collect(context.Background(), &data)
-	require.NoError(t, err)
-	assert.NotEmpty(t, data.ScopeMetrics)
-}
-
-// Helper function to count total data points in metrics
-func countMetricDataPoints(data metricdata.ResourceMetrics) int {
-	count := 0
-	for _, sm := range data.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			switch d := m.Data.(type) {
-			case metricdata.Sum[int64]:
-				count += len(d.DataPoints)
-			case metricdata.Sum[float64]:
-				count += len(d.DataPoints)
-			case metricdata.Histogram[int64]:
-				count += len(d.DataPoints)
-			case metricdata.Histogram[float64]:
-				count += len(d.DataPoints)
-			case metricdata.Gauge[int64]:
-				count += len(d.DataPoints)
-			case metricdata.Gauge[float64]:
-				count += len(d.DataPoints)
+	router.Use(rm.MiddlewareWithSkipPaths([]string{"/health", "/metrics"}))
+	collect := func() map[string]metricdata.Metrics {
+		var data metricdata.ResourceMetrics
+		require.NoError(t, reader.Collect(context.Background(), &data))
+		result := map[string]metricdata.Metrics{}
+		for _, scope := range data.ScopeMetrics {
+			for _, m := range scope.Metrics {
+				result[m.Name] = m
 			}
 		}
+		return result
 	}
-	return count
+	handler := func(status int) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			metrics := collect()
+			sum := metrics["mnemonic.http.request.in_flight"].Data.(metricdata.Sum[int64])
+			require.Len(t, sum.DataPoints, 1)
+			assert.EqualValues(t, 1, sum.DataPoints[0].Value)
+			c.Status(status)
+		}
+	}
+	router.POST("/items/:id", handler(201))
+	router.PUT("/items/:id", handler(200))
+	router.DELETE("/items/:id", handler(204))
+	router.GET("/failure", handler(503))
+	for _, path := range []string{"/health", "/metrics"} {
+		router.GET(path, func(c *gin.Context) { c.Status(200) })
+	}
+	request := func(method, path string, status int) {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+		assert.Equal(t, status, w.Code)
+	}
+	request("GET", "/health", 200)
+	request("GET", "/metrics", 200)
+	assert.Empty(t, collect(), "skip paths must produce zero observations")
+	request("POST", "/items/one", 201)
+	request("POST", "/items/two", 201)
+	request("PUT", "/items/one", 200)
+	request("DELETE", "/items/one", 204)
+	request("GET", "/failure", 503)
+	request("GET", "/not-registered", 404)
+	expected := map[attribute.Distinct]int64{}
+	for _, tc := range []struct {
+		method, route, status string
+		count                 int64
+	}{
+		{"POST", "/items/:id", "201", 2}, {"PUT", "/items/:id", "200", 1}, {"DELETE", "/items/:id", "204", 1}, {"GET", "/failure", "503", 1}, {"GET", "unknown", "404", 1},
+	} {
+		attrs := attribute.NewSet(attribute.String("http.method", tc.method), attribute.String("http.route", tc.route), attribute.String("http.status_code", tc.status))
+		expected[attrs.Equivalent()] = tc.count
+	}
+	metrics := collect()
+	require.Len(t, metrics, 3)
+	count := metrics["mnemonic.http.request.count"]
+	assert.Equal(t, "{request}", count.Unit)
+	sum := count.Data.(metricdata.Sum[int64])
+	assert.True(t, sum.IsMonotonic)
+	require.Len(t, sum.DataPoints, len(expected))
+	for _, point := range sum.DataPoints {
+		want, ok := expected[point.Attributes.Equivalent()]
+		require.True(t, ok, "unexpected labels: %v", point.Attributes)
+		assert.Equal(t, want, point.Value)
+	}
+	duration := metrics["mnemonic.http.request.duration"]
+	assert.Equal(t, "ms", duration.Unit)
+	hist := duration.Data.(metricdata.Histogram[float64])
+	require.Len(t, hist.DataPoints, len(expected))
+	for _, point := range hist.DataPoints {
+		want, ok := expected[point.Attributes.Equivalent()]
+		require.True(t, ok, "unexpected labels: %v", point.Attributes)
+		assert.Equal(t, uint64(want), point.Count)
+		assert.GreaterOrEqual(t, point.Sum, float64(0))
+		var buckets uint64
+		for _, n := range point.BucketCounts {
+			buckets += n
+		}
+		assert.Equal(t, point.Count, buckets)
+		assert.Equal(t, []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000}, point.Bounds)
+	}
+	flight := metrics["mnemonic.http.request.in_flight"]
+	assert.Equal(t, "{request}", flight.Unit)
+	inflight := flight.Data.(metricdata.Sum[int64])
+	assert.False(t, inflight.IsMonotonic)
+	require.Len(t, inflight.DataPoints, 1)
+	assert.Zero(t, inflight.DataPoints[0].Value)
+	assert.Zero(t, inflight.DataPoints[0].Attributes.Len())
 }

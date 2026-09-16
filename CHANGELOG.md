@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Bounded failure diagnostics for unexpected request errors: a single private request-completion log records the status, route template, duration, request ID, active trace and span IDs, and a redacted cause, and the active span records the exception.
+- `X-Request-ID` validation. The API echoes identifiers of up to 128 ASCII letters, digits, dots, underscores, or hyphens, and generates a UUID when the header is missing or invalid.
+
+### Changed
+
+- Error response `traceId` now identifies the active OpenTelemetry trace rather than the incoming `X-Request-ID`, and is omitted when no valid trace context exists. Request identity and trace identity are now separate values.
+- Request-completion logging moved from the `otelx` Gin middleware to an in-repository implementation that carries the failure cause.
+
+### Removed
+
+- In-process TLS support and `server.tls.*` configuration. TLS terminates at the reverse proxy and the API serves plain HTTP behind it, which is what the Docker health probe already assumed.
+
+### Fixed
+
+- Panic recovery now runs inside the observability middleware. A recovered panic produces a 500 completion log, an error span, and request count and duration metrics, and returns the in-flight count to zero; previously those frames unwound before the outer recovery wrote the response.
+
+### Security
+
+- Public 503 responses return a stable `service temporarily unavailable` detail instead of the upstream failure text, which could disclose upstream response bodies to API clients.
+- Private diagnostics redact upstream response bodies, URLs, quoted values, and credential or content fields, and exclude request bodies and query strings. Gin's default recovery, which prints raw panic values and request headers to stderr, is no longer used.
+
 ## [v0.3.4] - 2026-09-09
 
 ### Changed

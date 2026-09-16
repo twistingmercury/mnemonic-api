@@ -15,7 +15,9 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/twistingmercury/mnemonic-api/internal/middleware"
 	"github.com/twistingmercury/mnemonic-api/internal/service"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ProblemBaseURI is the base URI for problem type URIs.
@@ -80,7 +82,7 @@ func DecodeCursor(cursor string) int {
 
 // RespondError maps a service error to an RFC 7807 Problem Details response.
 func RespondError(c *gin.Context, err error) {
-	traceID := c.GetHeader("X-Request-ID")
+	traceID := activeTraceID(c)
 	instance := c.Request.URL.Path
 
 	switch {
@@ -112,15 +114,17 @@ func RespondError(c *gin.Context, err error) {
 			TraceID:  traceID,
 		})
 	case errors.Is(err, service.ErrServiceUnavailable):
+		middleware.RecordFailure(c, err)
 		c.JSON(http.StatusServiceUnavailable, ProblemDetail{
 			Type:     ProblemBaseURI + "service-unavailable",
 			Title:    "Service Unavailable",
 			Status:   http.StatusServiceUnavailable,
-			Detail:   err.Error(),
+			Detail:   "service temporarily unavailable",
 			Instance: instance,
 			TraceID:  traceID,
 		})
 	default:
+		middleware.RecordFailure(c, err)
 		c.JSON(http.StatusInternalServerError, ProblemDetail{
 			Type:     ProblemBaseURI + "internal-error",
 			Title:    "Internal Error",
@@ -134,7 +138,7 @@ func RespondError(c *gin.Context, err error) {
 
 // RespondValidationError returns a 400 response with field-level validation errors.
 func RespondValidationError(c *gin.Context, detail string, fieldErrors []FieldError) {
-	traceID := c.GetHeader("X-Request-ID")
+	traceID := activeTraceID(c)
 	instance := c.Request.URL.Path
 
 	c.JSON(http.StatusBadRequest, ProblemDetail{
@@ -217,4 +221,13 @@ func ParseFloatQuery(c *gin.Context, key string, defaultVal, minVal, maxVal floa
 		return maxVal
 	}
 	return val
+}
+
+// activeTraceID omits trace identity when no valid span context exists.
+func activeTraceID(c *gin.Context) string {
+	sc := trace.SpanContextFromContext(c.Request.Context())
+	if sc.IsValid() {
+		return sc.TraceID().String()
+	}
+	return ""
 }

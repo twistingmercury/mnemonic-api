@@ -52,6 +52,10 @@ The Go process runs only the REST API on port 8080. It connects to PostgreSQL wi
 - Semantic searches embed the query and rank enriched pattern chunks by vector similarity.
 - Health is exposed at `/health`; Prometheus metrics use a separate listener on port 9090 by default.
 
+Unexpected HTTP failures return generic 500/503 details. A single private request-completion log records the status, route template, duration, request ID, active trace/span IDs, and a bounded diagnostic cause; tracing records an exception and HTTP metrics include recovered panics. Diagnostics remove upstream response bodies, URLs, quoted values, and credential/content fields. Request bodies and query strings are not included in completion logs. New dependency error formats must preserve this privacy boundary.
+
+Error response `traceId` identifies the active OpenTelemetry trace and is omitted when no valid trace context exists. `X-Request-ID` remains separate: the API echoes identifiers of up to 128 ASCII letters, digits, dots, underscores, or hyphens, and generates a UUID for missing or invalid values. Successful `/health` and `/metrics` requests skip completion logging, tracing, and HTTP metrics.
+
 ## Key Considerations
 
 - The current API deployment model assumes a trusted environment and does not authenticate REST requests.
