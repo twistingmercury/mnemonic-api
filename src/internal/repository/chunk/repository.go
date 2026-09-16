@@ -14,9 +14,6 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/repository"
 )
 
-// Compile-time interface check.
-var _ Repository = (*pgxRepository)(nil)
-
 // Repository defines data access operations for pattern chunks.
 type Repository interface {
 	// Create stores a new chunk, returning id, enrichment_status, created_at, updated_at.

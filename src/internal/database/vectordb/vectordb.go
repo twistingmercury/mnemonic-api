@@ -3,7 +3,6 @@ package vectordb
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
@@ -17,8 +16,8 @@ func NewPostgresPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.P
 		return nil, fmt.Errorf("parsing postgres DSN: %w", err)
 	}
 
-	poolCfg.MaxConns = safeIntToInt32(cfg.MaxOpenConns)
-	poolCfg.MinConns = safeIntToInt32(cfg.MaxIdleConns)
+	poolCfg.MaxConns = cfg.MaxOpenConns
+	poolCfg.MinConns = cfg.MaxIdleConns
 	poolCfg.MaxConnLifetime = cfg.ConnMaxLifetime
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
@@ -32,15 +31,4 @@ func NewPostgresPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.P
 	}
 
 	return pool, nil
-}
-
-// safeIntToInt32 converts an int to int32 with clamping to prevent overflow.
-func safeIntToInt32(v int) int32 {
-	if v > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	if v < math.MinInt32 {
-		return math.MinInt32
-	}
-	return int32(v) // #nosec G115 -- bounds checked above
 }

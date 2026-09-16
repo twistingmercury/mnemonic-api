@@ -40,8 +40,8 @@ func TestDefaultValues(t *testing.T) {
 	assert.Equal(t, config.DefaultPostgresDatabase, cfg.Database.Postgres.Database)
 	assert.Equal(t, config.DefaultPostgresUsername, cfg.Database.Postgres.Username)
 	assert.Equal(t, config.DefaultPostgresSSLMode, cfg.Database.Postgres.SSLMode)
-	assert.Equal(t, config.DefaultPostgresMaxOpenConns, cfg.Database.Postgres.MaxOpenConns)
-	assert.Equal(t, config.DefaultPostgresMaxIdleConns, cfg.Database.Postgres.MaxIdleConns)
+	assert.Equal(t, int32(config.DefaultPostgresMaxOpenConns), cfg.Database.Postgres.MaxOpenConns)
+	assert.Equal(t, int32(config.DefaultPostgresMaxIdleConns), cfg.Database.Postgres.MaxIdleConns)
 	assert.Equal(t, config.DefaultPostgresConnMaxLifetime, cfg.Database.Postgres.ConnMaxLifetime)
 
 	// Neo4j defaults
@@ -267,7 +267,7 @@ func TestEnvironmentVariableNaming(t *testing.T) {
 			envVar: "MNEMONIC_DATABASE_POSTGRES_MAX_OPEN_CONNS",
 			value:  "50",
 			check: func(t *testing.T, cfg *config.MnemonicConfig) {
-				assert.Equal(t, 50, cfg.Database.Postgres.MaxOpenConns)
+				assert.Equal(t, int32(50), cfg.Database.Postgres.MaxOpenConns)
 			},
 		},
 		{
