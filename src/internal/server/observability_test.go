@@ -32,10 +32,15 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-type failingSearch struct{ err error }
+type stubSearch struct{ err error }
 
-func (f failingSearch) SearchPatterns(context.Context, searchsvc.SearchOptions) (*searchsvc.SearchResult, error) {
-	return nil, f.err
+// SearchPatterns fails with the configured error, or echoes the caller's query
+// back the way the real service does on success.
+func (s stubSearch) SearchPatterns(_ context.Context, opts searchsvc.SearchOptions) (*searchsvc.SearchResult, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &searchsvc.SearchResult{Query: opts.Query}, nil
 }
 
 func TestProductionHTTPObservability(t *testing.T) {
@@ -45,6 +50,7 @@ func TestProductionHTTPObservability(t *testing.T) {
 		err    error
 		panic  bool
 	}{
+		{"success", 200, nil, false},
 		{"internal", 500, errors.New("repository sentinel_failure"), false},
 		{"unavailable", 503, fmt.Errorf("%w: sentinel_failure: API returned status 502: provider-secret-body", service.ErrServiceUnavailable), false},
 		{"panic", 500, nil, true},
@@ -79,7 +85,7 @@ func TestProductionHTTPObservability(t *testing.T) {
 			if tc.panic {
 				router.GET("/v1/api/patterns/search", func(*gin.Context) { panic("sentinel_failure password=private-panic-secret") })
 			} else {
-				h := patterns.New(nil, failingSearch{tc.err}, config.VocabularyConfig{})
+				h := patterns.New(nil, stubSearch{tc.err}, config.VocabularyConfig{})
 				h.RegisterRoutes(router.Group("/v1/api"))
 			}
 			req := httptest.NewRequest(http.MethodGet, "/v1/api/patterns/search?q=private-query-secret", strings.NewReader("private-body-secret"))
@@ -90,13 +96,30 @@ func TestProductionHTTPObservability(t *testing.T) {
 			router.ServeHTTP(w, req)
 			require.Equal(t, tc.status, w.Code)
 			require.Equal(t, "request-distinct-123", w.Header().Get("X-Request-ID"))
+			const wantTraceID = "0123456789abcdef0123456789abcdef"
+			require.Equal(t, wantTraceID, active.TraceID().String())
 			var problem handlers.ProblemDetail
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem))
-			assert.Equal(t, tc.status, problem.Status)
-			assert.Equal(t, req.URL.Path, problem.Instance)
-			assert.Equal(t, active.TraceID().String(), problem.TraceID)
-			assert.Equal(t, "0123456789abcdef0123456789abcdef", problem.TraceID)
-			assert.NotEqual(t, w.Header().Get("X-Request-ID"), problem.TraceID)
+			if tc.status >= 400 {
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem))
+				assert.Equal(t, tc.status, problem.Status)
+				assert.Equal(t, req.URL.Path, problem.Instance)
+				assert.Equal(t, active.TraceID().String(), problem.TraceID)
+				assert.Equal(t, wantTraceID, problem.TraceID)
+				assert.NotEqual(t, w.Header().Get("X-Request-ID"), problem.TraceID)
+			} else {
+				// A 2xx search returns the real response body, not a problem document.
+				var body struct {
+					Results  []json.RawMessage `json:"results"`
+					Metadata struct {
+						Query string `json:"query"`
+					} `json:"metadata"`
+				}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				assert.Empty(t, body.Results)
+				// Echoing the caller's own query is the contract, not a leak.
+				assert.Equal(t, "private-query-secret", body.Metadata.Query)
+				assert.NotContains(t, w.Body.String(), "traceId")
+			}
 			spans := exporter.GetSpans()
 			require.Len(t, spans, 1)
 			assert.Equal(t, active, spans[0].SpanContext)
@@ -108,7 +131,7 @@ func TestProductionHTTPObservability(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(lines[0]), &log))
 			assert.Equal(t, "request completed", log["message"])
 			assert.Equal(t, float64(tc.status), log["status"])
-			assert.Equal(t, problem.TraceID, log["trace_id"])
+			assert.Equal(t, wantTraceID, log["trace_id"])
 			assert.Equal(t, active.SpanID().String(), log["span_id"])
 			assert.Equal(t, "request-distinct-123", log["request_id"])
 			assert.Equal(t, "/v1/api/patterns/search", log["route"])
@@ -131,10 +154,16 @@ func TestProductionHTTPObservability(t *testing.T) {
 				assert.NotEqual(t, codes.Error, spans[0].Status.Code)
 				assert.Empty(t, spans[0].Events)
 			}
-			for _, secret := range []string{"private-query-secret", "private-body-secret", "private-header-secret", "private-panic-secret", "provider-secret-body", "private-escaped-marker"} {
+			for _, secret := range []string{"private-body-secret", "private-header-secret", "private-panic-secret", "provider-secret-body", "private-escaped-marker"} {
 				assert.NotContains(t, logs.String(), secret)
 				assert.NotContains(t, fmt.Sprint(spans), secret)
 				assert.NotContains(t, w.Body.String(), secret)
+			}
+			// The query string reaches no log or span on any path; only a 2xx body echoes it.
+			assert.NotContains(t, logs.String(), "private-query-secret")
+			assert.NotContains(t, fmt.Sprint(spans), "private-query-secret")
+			if tc.status >= 400 {
+				assert.NotContains(t, w.Body.String(), "private-query-secret")
 			}
 			var data metricdata.ResourceMetrics
 			require.NoError(t, reader.Collect(context.Background(), &data))
@@ -219,6 +248,58 @@ func assertCompletionMetrics(t *testing.T, data metricdata.ResourceMetrics, stat
 		}
 	}
 	assert.Len(t, found, 3)
+}
+
+// TestRequestIDBoundedAlphabet pins the documented X-Request-ID contract: echo an
+// identifier of up to 128 letters, digits, dots, underscores or hyphens, and
+// replace anything else with a generated UUID. Deleting the character check while
+// keeping the length check must fail here.
+func TestRequestIDBoundedAlphabet(t *testing.T) {
+	for _, tc := range []struct {
+		name, header string
+		echoed       bool
+	}{
+		{"mixed valid alphabet", "Valid.id-123_OK", true},
+		{"maximum length", strings.Repeat("a", 128), true},
+		{"over maximum length", strings.Repeat("a", 129), false},
+		{"absent", "", false},
+		{"crlf injection", "abc\r\nX-Injected: evil", false},
+		{"control character", "abc\x00def", false},
+		{"embedded space", "abc def", false},
+		{"markup", "<script>", false},
+		{"non-ascii", "abcdéf", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := sdkmetric.NewManualReader()
+			mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+			t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
+			rm, err := middleware.NewRequestMetrics(mp.Meter("test"))
+			require.NoError(t, err)
+			var logs bytes.Buffer
+			router := setupRouter(zerolog.New(&logs), rm)
+			router.GET("/echo", func(c *gin.Context) { c.Status(http.StatusOK) })
+			req := httptest.NewRequest(http.MethodGet, "/echo", nil)
+			if tc.header != "" {
+				req.Header.Set("X-Request-ID", tc.header)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+			got := w.Header().Get("X-Request-ID")
+			if tc.echoed {
+				require.Equal(t, tc.header, got)
+			} else {
+				require.NotEqual(t, tc.header, got)
+				// A rejected identifier is replaced by a generated UUID.
+				assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, got)
+			}
+			// The logged request_id is whatever was echoed, so a rejected value
+			// reaches neither the response header nor the log stream.
+			var log map[string]any
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(logs.String())), &log))
+			assert.Equal(t, got, log["request_id"])
+		})
+	}
 }
 
 func TestProductionHTTPNoTraceAndSkips(t *testing.T) {

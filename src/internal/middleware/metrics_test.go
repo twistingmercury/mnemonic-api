@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -47,6 +48,14 @@ func TestRequestMetrics(t *testing.T) {
 	router.PUT("/items/:id", handler(200))
 	router.DELETE("/items/:id", handler(204))
 	router.GET("/failure", handler(503))
+	// A handler with a known floor lets the histogram's magnitude be checked, not
+	// just its shape. Recording the duration in any unit other than the declared
+	// milliseconds must fail below.
+	const slowFloor = 20 * time.Millisecond
+	router.GET("/slow", func(c *gin.Context) {
+		time.Sleep(slowFloor)
+		c.Status(200)
+	})
 	for _, path := range []string{"/health", "/metrics"} {
 		router.GET(path, func(c *gin.Context) { c.Status(200) })
 	}
@@ -63,13 +72,14 @@ func TestRequestMetrics(t *testing.T) {
 	request("PUT", "/items/one", 200)
 	request("DELETE", "/items/one", 204)
 	request("GET", "/failure", 503)
+	request("GET", "/slow", 200)
 	request("GET", "/not-registered", 404)
 	expected := map[attribute.Distinct]int64{}
 	for _, tc := range []struct {
 		method, route, status string
 		count                 int64
 	}{
-		{"POST", "/items/:id", "201", 2}, {"PUT", "/items/:id", "200", 1}, {"DELETE", "/items/:id", "204", 1}, {"GET", "/failure", "503", 1}, {"GET", "unknown", "404", 1},
+		{"POST", "/items/:id", "201", 2}, {"PUT", "/items/:id", "200", 1}, {"DELETE", "/items/:id", "204", 1}, {"GET", "/failure", "503", 1}, {"GET", "/slow", "200", 1}, {"GET", "unknown", "404", 1},
 	} {
 		attrs := attribute.NewSet(attribute.String("http.method", tc.method), attribute.String("http.route", tc.route), attribute.String("http.status_code", tc.status))
 		expected[attrs.Equivalent()] = tc.count
@@ -102,6 +112,21 @@ func TestRequestMetrics(t *testing.T) {
 		assert.Equal(t, point.Count, buckets)
 		assert.Equal(t, []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000}, point.Bounds)
 	}
+	slowAttrs := attribute.NewSet(attribute.String("http.method", "GET"), attribute.String("http.route", "/slow"), attribute.String("http.status_code", "200"))
+	slowSeries := slowAttrs.Equivalent()
+	slowSum, slowFound := float64(0), false
+	for _, point := range hist.DataPoints {
+		if point.Attributes.Equivalent() == slowSeries {
+			slowSum, slowFound = point.Sum, true
+		}
+	}
+	require.True(t, slowFound, "no duration series for the slow handler")
+	// The handler slept a known floor, so the value recorded under the declared "ms"
+	// unit is at least that many milliseconds. Seconds would report ~0.02 and
+	// nanoseconds ~2e7. Only a lower bound plus a loose sanity ceiling are asserted;
+	// a tight upper bound would be timing-flaky.
+	assert.GreaterOrEqual(t, slowSum, float64(slowFloor.Milliseconds()))
+	assert.Less(t, slowSum, float64(time.Minute.Milliseconds()))
 	flight := metrics["mnemonic.http.request.in_flight"]
 	assert.Equal(t, "{request}", flight.Unit)
 	inflight := flight.Data.(metricdata.Sum[int64])
