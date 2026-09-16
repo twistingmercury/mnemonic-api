@@ -1916,13 +1916,24 @@ func TestPatternEnrichment_ContentUpdateTriggersReenrichment(t *testing.T) {
 // Get Pattern Chunks (GET /v1/api/patterns/{id}/chunks)
 // -----------------------------------------------------------------------------
 
+// decoratedTwoSections yields exactly two chunks. Only sections carrying the
+// [//]: pattern decorator are chunked, so undecorated markdown produces none —
+// which is what made the earlier version of this test vacuous.
+const decoratedTwoSections = "[//]: pattern\n## Philosophy\nStorage-only databases.\n\n[//]: pattern\n## Usage\nCall the API."
+
+// decoratedThreeSections replaces the above with different titles and a
+// different count, so a stale chunk surviving an update is visible.
+const decoratedThreeSections = "[//]: pattern\n## Rationale\nWhy it exists.\n\n[//]: pattern\n## Limits\nWhat it will not do.\n\n[//]: pattern\n## Recovery\nHow to repair it."
+
 func TestGetPatternChunks_ReturnsChunksForPattern(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	// Create a pattern (chunks are populated asynchronously by enrichment)
+	// Chunks are written synchronously inside Create's transaction. Enrichment
+	// only adds embeddings later, so they must be complete the moment Create
+	// returns — no polling, and an empty list is a failure, not a pending state.
 	body := helpers.PatternCreate{
 		Name:       helpers.GenerateUniqueName("pattern"),
-		Content:    "## Philosophy\nStorage-only databases.\n\n## Usage\nCall the API.",
+		Content:    decoratedTwoSections,
 		EntityType: "go-pattern",
 		Language:   "go",
 		Domain:     "backend",
@@ -1932,22 +1943,250 @@ func TestGetPatternChunks_ReturnsChunksForPattern(t *testing.T) {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
-
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	// GET /v1/api/patterns/:id/chunks — returns 200 with chunks (may be empty if not yet enriched)
 	resp, err := client.Get("/v1/api/patterns/" + created.ID + "/chunks")
 	if err != nil {
 		t.Fatalf("failed to GET chunks: %v", err)
 	}
-
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
 	chunkList := helpers.ParseJSON[helpers.ChunkListResponse](t, resp)
 
-	if chunkList.Chunks == nil {
-		t.Fatal("expected chunks field to be present (may be empty)")
+	if len(chunkList.Chunks) != 2 {
+		t.Fatalf("expected exactly 2 chunks immediately after create, got %d: %+v",
+			len(chunkList.Chunks), chunkList.Chunks)
 	}
+	if chunkList.Count != 2 {
+		t.Errorf("expected count 2, got %d", chunkList.Count)
+	}
+
+	wantTitles := []string{"Philosophy", "Usage"}
+	for i, chunk := range chunkList.Chunks {
+		if chunk.ChunkIndex != i {
+			t.Errorf("chunk %d: expected chunk_index %d, got %d", i, i, chunk.ChunkIndex)
+		}
+		if chunk.SectionTitle != wantTitles[i] {
+			t.Errorf("chunk %d: expected section_title %q, got %q", i, wantTitles[i], chunk.SectionTitle)
+		}
+		// Every chunk is created with its enrichment job, so none can be
+		// missing one and stuck outside the pending queue.
+		if chunk.EnrichmentStatus != "pending" {
+			t.Errorf("chunk %d: expected enrichment_status \"pending\", got %q", i, chunk.EnrichmentStatus)
+		}
+	}
+}
+
+// TestUpdatePattern_ReplacesChunks covers the half of re-enrichment that HTTP
+// can see: Update deletes every stale chunk and inserts the new set in one
+// transaction. Asserting only that status returns to "pending" proves nothing,
+// because a freshly created pattern is already pending — that assertion
+// survives deleting the reset entirely.
+func TestUpdatePattern_ReplacesChunks(t *testing.T) {
+	client := helpers.NewTestClient(t)
+
+	name := helpers.GenerateUniqueName("pattern")
+	createResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+		Name:       name,
+		Content:    decoratedTwoSections,
+		EntityType: "go-pattern",
+		Language:   "go",
+		Domain:     "backend",
+	})
+	if err != nil {
+		t.Fatalf("failed to create pattern: %v", err)
+	}
+	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
+	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
+
+	before := getChunkTitles(t, client, created.ID)
+	if got := []string{"Philosophy", "Usage"}; !equalStrings(before, got) {
+		t.Fatalf("precondition failed: expected %v before update, got %v", got, before)
+	}
+
+	updateResp, err := client.Put(patternPath(created.ID), helpers.PatternUpdate{
+		Name:       name,
+		Content:    decoratedThreeSections,
+		EntityType: "go-pattern",
+		Language:   "go",
+		Domain:     "backend",
+	})
+	if err != nil {
+		t.Fatalf("failed to PUT %s: %v", patternPath(created.ID), err)
+	}
+	helpers.AssertStatusCode(t, updateResp, http.StatusNoContent)
+	helpers.ReadBody(t, updateResp)
+
+	after := getChunkTitles(t, client, created.ID)
+	want := []string{"Rationale", "Limits", "Recovery"}
+	if !equalStrings(after, want) {
+		t.Fatalf("expected chunks replaced with %v, got %v", want, after)
+	}
+
+	// Stale chunks must be gone, not merely outnumbered by new ones.
+	for _, stale := range before {
+		for _, title := range after {
+			if title == stale {
+				t.Errorf("stale chunk %q survived the update", stale)
+			}
+		}
+	}
+
+	getResp, err := client.Get(patternPath(created.ID))
+	if err != nil {
+		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
+	}
+	updated := helpers.ParseJSON[helpers.Pattern](t, getResp)
+	if updated.EnrichmentStatus != "pending" {
+		t.Errorf("expected enrichment_status \"pending\" after update, got %q", updated.EnrichmentStatus)
+	}
+}
+
+func getChunkTitles(t *testing.T, client *helpers.TestClient, patternID string) []string {
+	t.Helper()
+	resp, err := client.Get("/v1/api/patterns/" + patternID + "/chunks")
+	if err != nil {
+		t.Fatalf("failed to GET chunks: %v", err)
+	}
+	helpers.AssertStatusCode(t, resp, http.StatusOK)
+	list := helpers.ParseJSON[helpers.ChunkListResponse](t, resp)
+	titles := make([]string, len(list.Chunks))
+	for i, c := range list.Chunks {
+		titles[i] = c.SectionTitle
+	}
+	return titles
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// overlongSectionTitle exceeds pattern_chunks.section_title (varchar(255)), so
+// the chunk INSERT fails after the pattern row has already been inserted in the
+// same transaction. That is the only way to force a mid-transaction failure
+// through the public API, and it is what makes the two rollback tests below
+// possible.
+//
+// If a per-section-title limit is ever validated at the handler, these tests
+// will start seeing 400 instead of 500 and fail loudly. That is the correct
+// signal: move them to the integration tier, where the failure can be injected
+// rather than provoked.
+func overlongSectionTitle() string {
+	return "[//]: pattern\n## " + strings.Repeat("T", 300) + "\nBody text."
+}
+
+// TestCreatePattern_FailedWriteLeavesNothingPersisted covers H4: Create used to
+// insert the pattern before its chunks without an enclosing transaction, so a
+// chunk failure returned 500 with the pattern already persisted — and the
+// caller's retry then hit 409 on its own name, with no way forward.
+func TestCreatePattern_FailedWriteLeavesNothingPersisted(t *testing.T) {
+	client := helpers.NewTestClient(t)
+	name := helpers.GenerateUniqueName("rollback")
+
+	failResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+		Name:       name,
+		Content:    overlongSectionTitle(),
+		EntityType: "go-pattern",
+		Language:   "go",
+		Domain:     "backend",
+	})
+	if err != nil {
+		t.Fatalf("failed to POST: %v", err)
+	}
+	helpers.AssertStatusCode(t, failResp, http.StatusInternalServerError)
+	helpers.ReadBody(t, failResp)
+
+	// The decisive check: the same name must be free. A pattern row surviving
+	// the failure would answer 409 here, which is exactly the dead end H4
+	// describes.
+	retryResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+		Name:       name,
+		Content:    decoratedTwoSections,
+		EntityType: "go-pattern",
+		Language:   "go",
+		Domain:     "backend",
+	})
+	if err != nil {
+		t.Fatalf("failed to POST retry: %v", err)
+	}
+	if retryResp.StatusCode == http.StatusConflict {
+		t.Fatalf("retry returned 409: the failed create left a pattern row behind")
+	}
+	helpers.AssertStatusCode(t, retryResp, http.StatusAccepted)
+	created := helpers.ParseJSON[helpers.Pattern](t, retryResp)
+
+	// And the retry is a complete pattern, not a repair of a half-written one.
+	if got := getChunkTitles(t, client, created.ID); !equalStrings(got, []string{"Philosophy", "Usage"}) {
+		t.Fatalf("expected the retry to write both chunks, got %v", got)
+	}
+}
+
+// TestUpdatePattern_FailedWriteLeavesPriorStateIntact matters more than the
+// Create case: Update deletes the existing chunks inside the transaction before
+// inserting the new ones, so a failure that committed would leave the pattern
+// with no chunks at all and no route back to being enriched.
+func TestUpdatePattern_FailedWriteLeavesPriorStateIntact(t *testing.T) {
+	client := helpers.NewTestClient(t)
+	name := helpers.GenerateUniqueName("rollback-update")
+
+	createResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+		Name:       name,
+		Content:    decoratedTwoSections,
+		EntityType: "go-pattern",
+		Language:   "go",
+		Domain:     "backend",
+	})
+	if err != nil {
+		t.Fatalf("failed to create pattern: %v", err)
+	}
+	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
+	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
+
+	before := helpers.ParseJSON[helpers.Pattern](t, mustGet(t, client, patternPath(created.ID)))
+
+	failResp, err := client.Put(patternPath(created.ID), helpers.PatternUpdate{
+		Name:       name,
+		Content:    overlongSectionTitle(),
+		EntityType: "go-pattern",
+		Language:   "go",
+		Domain:     "backend",
+	})
+	if err != nil {
+		t.Fatalf("failed to PUT: %v", err)
+	}
+	helpers.AssertStatusCode(t, failResp, http.StatusInternalServerError)
+	helpers.ReadBody(t, failResp)
+
+	after := helpers.ParseJSON[helpers.Pattern](t, mustGet(t, client, patternPath(created.ID)))
+	if after.Content != before.Content {
+		t.Errorf("content changed despite the failed update:\n before: %q\n after:  %q", before.Content, after.Content)
+	}
+	if after.UpdatedAt != before.UpdatedAt {
+		t.Errorf("updated_at changed despite the failed update: %q -> %q", before.UpdatedAt, after.UpdatedAt)
+	}
+
+	// The stale chunks must still be there. This is what a committed partial
+	// update would destroy.
+	if got := getChunkTitles(t, client, created.ID); !equalStrings(got, []string{"Philosophy", "Usage"}) {
+		t.Fatalf("expected the original chunks to survive, got %v", got)
+	}
+}
+
+func mustGet(t *testing.T, client *helpers.TestClient, path string) *http.Response {
+	t.Helper()
+	resp, err := client.Get(path)
+	if err != nil {
+		t.Fatalf("failed to GET %s: %v", path, err)
+	}
+	helpers.AssertStatusCode(t, resp, http.StatusOK)
+	return resp
 }
 
 func TestGetPatternChunks_InvalidUUIDReturns400(t *testing.T) {

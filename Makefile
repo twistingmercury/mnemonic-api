@@ -1,4 +1,4 @@
-.PHONY: local build analyze tests-unit tests-bench docs-swagger start stop help
+.PHONY: local build analyze tests-unit tests-integration tests-bench docs-swagger start stop help
 
 GIT_COMMIT := $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 GIT_TAG    := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
@@ -18,6 +18,9 @@ analyze: ## Run linters, formatters, security scanners, etc
 tests-unit: ## Run unit tests with coverage
 	cd src && go test ./internal/... -coverprofile=coverage.out
 	cd src && go tool cover -html=coverage.out
+
+tests-integration: ## Run integration tests against a throwaway PostgreSQL (requires Docker)
+	./src/tests/db/run.sh $(PKGS)
 
 tests-bench: ## Run benchmark tests
 	cd src && go test ./internal/... -bench=. -benchmem -run=^$$

@@ -56,11 +56,6 @@ func NewRepository(db repository.DBTX) Repository {
 	return &pgxRepository{db: db}
 }
 
-// WithTx returns a new Repository that executes all operations within db.
-func (r *pgxRepository) WithTx(db repository.DBTX) Repository {
-	return &pgxRepository{db: db}
-}
-
 // Create stores a new pattern in the database.
 func (r *pgxRepository) Create(ctx context.Context, pattern *Pattern) error {
 	// Defensive check: ensure Tags is not nil (database requires JSON array, not null)
@@ -463,4 +458,9 @@ func (r *pgxRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) 
 	}
 
 	return exists, nil
+}
+
+// WithTx returns a new Repository that executes all operations within db.
+func (r *pgxRepository) WithTx(db repository.DBTX) Repository {
+	return &pgxRepository{db: db}
 }

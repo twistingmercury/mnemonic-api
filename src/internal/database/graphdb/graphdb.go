@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	neo4jcfg "github.com/neo4j/neo4j-go-driver/v5/neo4j/config"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 )
 
@@ -16,7 +17,7 @@ func NewNeo4jDriver(ctx context.Context, cfg config.Neo4jConfig) (neo4j.DriverWi
 	driver, err := neo4j.NewDriverWithContext(
 		cfg.URI,
 		neo4j.BasicAuth(username, password, ""),
-		func(driverCfg *neo4j.Config) {
+		func(driverCfg *neo4jcfg.Config) {
 			driverCfg.MaxConnectionPoolSize = cfg.MaxConnectionPoolSize
 			driverCfg.ConnectionAcquisitionTimeout = cfg.ConnectionAcquisitionTimeout
 		},

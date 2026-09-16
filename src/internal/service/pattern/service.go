@@ -15,37 +15,37 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/repository"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
-	enrichmentrepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
-	graphrepo "github.com/twistingmercury/mnemonic-api/internal/repository/graph"
-	patternrepo "github.com/twistingmercury/mnemonic-api/internal/repository/pattern"
+	enrichRepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
+	graphRepo "github.com/twistingmercury/mnemonic-api/internal/repository/graph"
+	patternRepo "github.com/twistingmercury/mnemonic-api/internal/repository/pattern"
 	"github.com/twistingmercury/mnemonic-api/internal/service"
 )
 
 // Service defines the operations for managing pattern lifecycle.
 type Service interface {
-	// Create stores a new pattern in Postgres, creates an enrichment job,
-	// and best-effort syncs to Neo4j.
+	// Create stores a pattern with its chunks and one pending enrichment job
+	// per chunk, atomically. Enrichment runs out of process afterwards, so a
+	// successful Create does not mean the pattern is searchable yet.
 	// Returns service.ErrConflict if the pattern name already exists.
-	Create(ctx context.Context, input CreateInput) (*patternrepo.Pattern, error)
+	Create(ctx context.Context, input CreateInput) (*patternRepo.Pattern, error)
 
 	// Get retrieves a pattern by ID. Returns service.ErrNotFound if not found.
-	Get(ctx context.Context, id uuid.UUID) (*patternrepo.Pattern, error)
+	Get(ctx context.Context, id uuid.UUID) (*patternRepo.Pattern, error)
 
 	// GetWithGraph retrieves a pattern and, if enriched, its graph context
 	// (related patterns and concepts). Neo4j failures degrade gracefully,
 	// returning (pattern, nil, nil) instead of an error.
-	GetWithGraph(ctx context.Context, id uuid.UUID) (*patternrepo.Pattern, *GraphContext, error)
+	GetWithGraph(ctx context.Context, id uuid.UUID) (*patternRepo.Pattern, *GraphContext, error)
 
-	// Update modifies an existing pattern, creates a new enrichment job,
-	// and best-effort syncs to Neo4j.
-	Update(ctx context.Context, id uuid.UUID, input UpdateInput) (*patternrepo.Pattern, error)
+	// Update modifies an existing pattern, creates a new enrichment job
+	Update(ctx context.Context, id uuid.UUID, input UpdateInput) (*patternRepo.Pattern, error)
 
 	// Delete removes a pattern from Postgres (CASCADE handles associations and
 	// jobs) and best-effort cleans up Neo4j.
 	Delete(ctx context.Context, id uuid.UUID) error
 
 	// List retrieves patterns with filtering and pagination.
-	List(ctx context.Context, filter patternrepo.Filter, opts ListOptions) ([]*patternrepo.Pattern, int64, error)
+	List(ctx context.Context, filter patternRepo.Filter, opts ListOptions) ([]*patternRepo.Pattern, int64, error)
 
 	// FindRelated finds patterns related to the given pattern via the Neo4j
 	// knowledge graph. Returns service.ErrNotFound if the pattern does not exist.
@@ -110,14 +110,11 @@ type ListOptions struct {
 	Limit  int
 }
 
-// Compile-time interface check.
-var _ Service = (*patternService)(nil)
-
 // patternService implements the Service interface.
 type patternService struct {
-	patternRepo    patternrepo.Repository
-	enrichmentRepo enrichmentrepo.Repository
-	graphRepo      graphrepo.Repository
+	patternRepo    patternRepo.Repository
+	enrichmentRepo enrichRepo.Repository
+	graphRepo      graphRepo.Repository
 	chunkRepo      chunkrepo.Repository
 	pool           repository.TxBeginner
 	publisher      queue.Publisher
@@ -126,9 +123,9 @@ type patternService struct {
 
 // New creates a new pattern Service backed by the given repositories.
 func New(
-	patternRepo patternrepo.Repository,
-	enrichmentRepo enrichmentrepo.Repository,
-	graphRepo graphrepo.Repository,
+	patternRepo patternRepo.Repository,
+	enrichmentRepo enrichRepo.Repository,
+	graphRepo graphRepo.Repository,
 	pool repository.TxBeginner,
 	chunkRepo chunkrepo.Repository,
 	publisher queue.Publisher,
@@ -195,19 +192,21 @@ func splitIntoChunks(content string) []chunk {
 
 // publishJob enqueues jobID for async enrichment. Errors are best-effort:
 // the job row already exists in PostgreSQL so the pattern is never lost.
-func (s *patternService) publishJob(ctx context.Context, jobID uuid.UUID) {
+func (s *patternService) publishJob(ctx context.Context, jobID, patternID uuid.UUID) {
 	if err := s.publisher.Publish(ctx, jobID); err != nil {
 		s.logger.Warn().
 			Err(err).
 			Str("job_id", jobID.String()).
+			Str("pattern_id", patternID.String()).
 			Msg("failed to publish enrichment job — job remains pending in postgres")
 	}
 }
 
-// Create stores a new pattern, creates an enrichment job, and best-effort
-// syncs to Neo4j.
-func (s *patternService) Create(ctx context.Context, input CreateInput) (*patternrepo.Pattern, error) {
-	pattern := patternrepo.Pattern{
+// Create writes the pattern, its chunks and their enrichment jobs in one
+// transaction, then publishes the jobs. Publication is best-effort: a failure
+// there leaves the job rows pending for recovery rather than losing the work.
+func (s *patternService) Create(ctx context.Context, input CreateInput) (*patternRepo.Pattern, error) {
+	pattern := patternRepo.Pattern{
 		Name:            input.Name,
 		Description:     input.Description,
 		Content:         input.Content,
@@ -219,58 +218,43 @@ func (s *patternService) Create(ctx context.Context, input CreateInput) (*patter
 		RelatedPatterns: input.RelatedPatterns,
 	}
 
-	if err := s.patternRepo.Create(ctx, &pattern); err != nil {
-		if errors.Is(err, patternrepo.ErrNameExists) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start transaction: %w", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if err := s.patternRepo.WithTx(tx).Create(ctx, &pattern); err != nil {
+		if errors.Is(err, patternRepo.ErrNameExists) {
 			return nil, fmt.Errorf("%w: pattern %q", service.ErrConflict, input.Name)
 		}
 		return nil, fmt.Errorf("create pattern: %w", err)
 	}
 
-	// Split content into chunks and create them.
-	rawChunks := splitIntoChunks(input.Content)
-	if len(rawChunks) > 0 {
-		chunks := make([]*chunkrepo.Chunk, len(rawChunks))
-		for i, rc := range rawChunks {
-			chunks[i] = &chunkrepo.Chunk{
-				PatternID:    pattern.ID,
-				SectionTitle: rc.Title,
-				ChunkIndex:   i,
-				Content:      rc.Content,
-			}
-		}
-		if err := s.chunkRepo.CreateBatch(ctx, chunks); err != nil {
-			return nil, fmt.Errorf("create pattern: creating chunks: %w", err)
-		}
+	jobIDs, err := s.insertChunksAndJobs(ctx, tx, pattern.ID, input.Content)
+	if err != nil {
+		return nil, fmt.Errorf("failed insert chunks and jobs: %w", err)
+	}
 
-		// Create one enrichment job per chunk. Failures are best-effort: a
-		// missed job means that chunk won't be embedded initially, but manual
-		// re-enrichment or a future retry can recover it without data loss.
-		var jobFailures int
-		for _, c := range chunks {
-			chunkID := c.ID
-			job := enrichmentrepo.Job{ChunkID: &chunkID}
-			if jobErr := s.enrichmentRepo.Create(ctx, &job); jobErr != nil {
-				jobFailures++
-			} else {
-				s.publishJob(ctx, job.ID)
-			}
-		}
-		if jobFailures > 0 {
-			s.logger.Warn().
-				Int("failed", jobFailures).
-				Int("total", len(chunks)).
-				Msg("failed to create chunk enrichment jobs — affected chunks will not be embedded until re-PUT")
-		}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	for _, id := range jobIDs {
+		s.publishJob(ctx, id, pattern.ID)
 	}
 
 	return &pattern, nil
 }
 
 // Get retrieves a pattern by ID.
-func (s *patternService) Get(ctx context.Context, id uuid.UUID) (*patternrepo.Pattern, error) {
+func (s *patternService) Get(ctx context.Context, id uuid.UUID) (*patternRepo.Pattern, error) {
 	pattern, err := s.patternRepo.Get(ctx, id)
 	if err != nil {
-		if errors.Is(err, patternrepo.ErrNotFound) {
+		if errors.Is(err, patternRepo.ErrNotFound) {
 			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, id)
 		}
 		return nil, fmt.Errorf("get pattern: %w", err)
@@ -280,10 +264,10 @@ func (s *patternService) Get(ctx context.Context, id uuid.UUID) (*patternrepo.Pa
 
 // GetWithGraph retrieves a pattern and its graph context. If the pattern is not
 // enriched or Neo4j is unavailable, the graph context is nil.
-func (s *patternService) GetWithGraph(ctx context.Context, id uuid.UUID) (*patternrepo.Pattern, *GraphContext, error) {
+func (s *patternService) GetWithGraph(ctx context.Context, id uuid.UUID) (*patternRepo.Pattern, *GraphContext, error) {
 	pattern, err := s.patternRepo.Get(ctx, id)
 	if err != nil {
-		if errors.Is(err, patternrepo.ErrNotFound) {
+		if errors.Is(err, patternRepo.ErrNotFound) {
 			return nil, nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, id)
 		}
 		return nil, nil, fmt.Errorf("get pattern with graph: %w", err)
@@ -306,14 +290,16 @@ func (s *patternService) GetWithGraph(ctx context.Context, id uuid.UUID) (*patte
 	return pattern, graphCtx, nil
 }
 
-// Update modifies an existing pattern, triggers re-enrichment, and best-effort
-// syncs to Neo4j.
-func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateInput) (*patternrepo.Pattern, error) {
+// Update rewrites the pattern and replaces every chunk and enrichment job in
+// one transaction, then publishes the new jobs. Deleting the old chunks
+// cascades their jobs away, so a partial update would strand the pattern with
+// no route back to being enriched.
+func (s *patternService) Update(ctx context.Context, patternID uuid.UUID, input UpdateInput) (*patternRepo.Pattern, error) {
 	// Verify pattern exists.
-	existing, err := s.patternRepo.Get(ctx, id)
+	existing, err := s.patternRepo.Get(ctx, patternID)
 	if err != nil {
-		if errors.Is(err, patternrepo.ErrNotFound) {
-			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, id)
+		if errors.Is(err, patternRepo.ErrNotFound) {
+			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
 		}
 		return nil, fmt.Errorf("update pattern: %w", err)
 	}
@@ -329,69 +315,38 @@ func (s *patternService) Update(ctx context.Context, id uuid.UUID, input UpdateI
 	existing.Version = input.Version
 	existing.RelatedPatterns = input.RelatedPatterns
 
-	// Perform the three mutating writes (pattern update, delete stale chunks,
-	// create new chunks) inside a single Postgres transaction so a crash
-	// between steps cannot leave chunks without enrichment jobs.
-	var newChunks []*chunkrepo.Chunk
-	var txErr error
-	newChunks, txErr = s.updateWithTransaction(ctx, existing)
-	if txErr != nil {
-		return nil, txErr
+	jobIDs, err := s.updateWithTransaction(ctx, existing)
+	if err != nil {
+		return nil, err
 	}
 
-	// Enqueue per-chunk enrichment jobs outside the transaction. Failures are
-	// best-effort: a missed job can be recovered by manual re-enrichment.
-	var jobFailures int
-	for _, c := range newChunks {
-		chunkID := c.ID
-		job := enrichmentrepo.Job{
-			ChunkID: &chunkID,
-			Status:  enrichmentrepo.StatusPending,
-		}
-		if err := s.enrichmentRepo.Create(ctx, &job); err != nil {
-			jobFailures++
-		} else {
-			s.publishJob(ctx, job.ID)
-		}
-	}
-	if jobFailures > 0 {
-		s.logger.Warn().
-			Int("failed", jobFailures).
-			Int("total", len(newChunks)).
-			Msg("failed to create chunk enrichment jobs — affected chunks will not be embedded until re-PUT")
+	for _, jobId := range jobIDs {
+		s.publishJob(ctx, jobId, patternID)
 	}
 
 	return existing, nil
 }
 
-// updateWithTransaction performs the three mutating writes for the chunk-aware
-// Update path inside a single Postgres transaction:
-//  1. Update the pattern row.
-//  2. Delete stale chunks (cascades to their enrichment jobs).
-//  3. Insert new chunks.
-//
-// Returns the new chunks so the caller can enqueue enrichment jobs outside
-// the transaction. The transaction is rolled back automatically if any step
-// fails — the caller never sees a partial state.
 func (s *patternService) updateWithTransaction(
 	ctx context.Context,
-	existing *patternrepo.Pattern,
-) ([]*chunkrepo.Chunk, error) {
+	existing *patternRepo.Pattern,
+) ([]uuid.UUID, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("update pattern: begin transaction: %w", err)
 	}
-	// Rollback is a no-op after a successful Commit (pgx guarantees this).
-	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Construct tx-scoped repos so all writes participate in the same
-	// Postgres transaction.
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	// construct tx-scoped repos so all writes participate in the same ransaction.
 	txPatternRepo := s.patternRepo.WithTx(tx)
 	txChunkRepo := s.chunkRepo.WithTx(tx)
 
 	// Step 1: update the pattern row.
 	if err = txPatternRepo.Update(ctx, existing); err != nil {
-		if errors.Is(err, patternrepo.ErrNameExists) {
+		if errors.Is(err, patternRepo.ErrNameExists) {
 			return nil, fmt.Errorf("%w: pattern %q", service.ErrConflict, existing.Name)
 		}
 		return nil, fmt.Errorf("update pattern: %w", err)
@@ -402,34 +357,23 @@ func (s *patternService) updateWithTransaction(
 		return nil, fmt.Errorf("update pattern: delete stale chunks: %w", err)
 	}
 
-	// Step 3: re-split and insert new chunks.
-	rawChunks := splitIntoChunks(existing.Content)
-	newChunks := make([]*chunkrepo.Chunk, len(rawChunks))
-	for i, rc := range rawChunks {
-		newChunks[i] = &chunkrepo.Chunk{
-			PatternID:    existing.ID,
-			SectionTitle: rc.Title,
-			ChunkIndex:   i,
-			Content:      rc.Content,
-		}
-	}
-	if len(newChunks) > 0 {
-		if err = txChunkRepo.CreateBatch(ctx, newChunks); err != nil {
-			return nil, fmt.Errorf("update pattern: create chunks: %w", err)
-		}
+	// Step 3: re-split, insert new chunks, and create their enrichment jobs.
+	jobIDs, err := s.insertChunksAndJobs(ctx, tx, existing.ID, existing.Content)
+	if err != nil {
+		return nil, fmt.Errorf("update pattern: %w", err)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("update pattern: commit transaction: %w", err)
 	}
 
-	return newChunks, nil
+	return jobIDs, nil
 }
 
 // Delete removes a pattern from Postgres and best-effort cleans up Neo4j.
 func (s *patternService) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.patternRepo.Delete(ctx, id); err != nil {
-		if errors.Is(err, patternrepo.ErrNotFound) {
+		if errors.Is(err, patternRepo.ErrNotFound) {
 			return fmt.Errorf("%w: pattern %s", service.ErrNotFound, id)
 		}
 		return fmt.Errorf("delete pattern: %w", err)
@@ -448,7 +392,7 @@ func (s *patternService) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 // List retrieves patterns with filtering and pagination.
-func (s *patternService) List(ctx context.Context, filter patternrepo.Filter, opts ListOptions) ([]*patternrepo.Pattern, int64, error) {
+func (s *patternService) List(ctx context.Context, filter patternRepo.Filter, opts ListOptions) ([]*patternRepo.Pattern, int64, error) {
 	patterns, total, err := s.patternRepo.List(ctx, filter, repository.ListOptions{
 		Offset: opts.Offset,
 		Limit:  opts.Limit,
@@ -493,7 +437,7 @@ func (s *patternService) FindRelated(ctx context.Context, patternID uuid.UUID, l
 // Returns service.ErrNotFound if the pattern does not exist.
 func (s *patternService) ListChunks(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
 	if _, err := s.patternRepo.Get(ctx, patternID); err != nil {
-		if errors.Is(err, patternrepo.ErrNotFound) {
+		if errors.Is(err, patternRepo.ErrNotFound) {
 			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
 		}
 		return nil, fmt.Errorf("list chunks: %w", err)
@@ -552,4 +496,46 @@ func (s *patternService) syncNeo4j(entityDesc string, fn func() error) {
 			Str("entity", entityDesc).
 			Msg("neo4j sync failed")
 	}
+}
+
+// insertChunksAndJobs inserts the chunks for content and one pending job per
+// chunk, returning the job IDs. Publish them only after the caller commits: a
+// message sent inside the transaction can outlive a rollback, leaving the
+// enricher to claim a job row that no longer exists.
+func (s *patternService) insertChunksAndJobs(ctx context.Context, tx repository.DBTX, patternID uuid.UUID, content string) ([]uuid.UUID, error) {
+	chunkRepo := s.chunkRepo.WithTx(tx)
+	jobRepo := s.enrichmentRepo.WithTx(tx)
+
+	rawChunks := splitIntoChunks(content)
+	var publishedJobs = make([]uuid.UUID, 0)
+
+	if len(rawChunks) == 0 {
+		return publishedJobs, nil
+	}
+
+	chunks := make([]*chunkrepo.Chunk, len(rawChunks))
+	for i, rc := range rawChunks {
+		chunks[i] = &chunkrepo.Chunk{
+			PatternID:    patternID,
+			SectionTitle: rc.Title,
+			ChunkIndex:   i,
+			Content:      rc.Content,
+		}
+	}
+
+	if err := chunkRepo.CreateBatch(ctx, chunks); err != nil {
+		return nil, fmt.Errorf("failed to create a chunk batch: %w", err)
+	}
+
+	for _, c := range chunks {
+		chunkID := c.ID
+		job := enrichRepo.Job{ChunkID: &chunkID}
+		if err := jobRepo.Create(ctx, &job); err != nil {
+			return nil, fmt.Errorf("failed to create enrichment job for patternID %v: %w", patternID, err)
+		}
+
+		publishedJobs = append(publishedJobs, job.ID)
+	}
+
+	return publishedJobs, nil
 }
