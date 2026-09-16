@@ -60,6 +60,7 @@ Error response `traceId` identifies the active OpenTelemetry trace and is omitte
 
 - The current API deployment model assumes a trusted environment and does not authenticate REST requests.
 - Pattern creation is asynchronous and returns `202 Accepted`; semantic results become available after enrichment completes.
+- A create or update writes the pattern, its chunks and one enrichment job per chunk in one transaction. A failure persists nothing, so a rejected create leaves its name free to retry. Publishing those jobs to RabbitMQ happens after the commit and is best-effort: if it fails the rows remain pending rather than being lost.
 - PostgreSQL, Neo4j, RabbitMQ, and an OpenAI API key are required for a working runtime.
 - Direct execution uses ports 8080 and 9090. The root Docker Compose stack publishes the Admin API on port 3000; the separate `dev_mcp` service owns its MCP listener.
 - Configuration and API contracts may change while the project remains at the Emerging maturity level.
@@ -102,12 +103,17 @@ Nested keys use underscores in environment variables. For example, `server.port`
 The root Makefile provides the supported test entry points:
 
 ```bash
-make tests-unit       # Unit tests with coverage
-make tests-bench      # Internal package benchmarks
-make build            # Image build plus the full E2E suite
+make tests-unit          # Unit tests with coverage
+make tests-integration   # Tests tagged `integration` against a throwaway PostgreSQL
+make tests-bench         # Internal package benchmarks
+make build               # Image build plus the full E2E suite
 ```
 
 The E2E suite uses the pre-migrated PostgreSQL and Neo4j images and requires Docker.
+
+`make tests-integration` starts PostgreSQL on port 5435 in its own Compose project, declaring no volume so every run begins with an empty database, and tears it down afterwards. Scope it with `PKGS=./internal/service/pattern/...`. These tests carry the `integration` build tag and are skipped by `make tests-unit`; without `TEST_DATABASE_URL` they skip and still report `ok`, so use `GOFLAGS=-v` to confirm they actually ran.
+
+`make build` is the verification bar. A stack left running by `make start` keeps whatever image it began with, so testing against it says nothing about the current working tree.
 
 The [golangci-lint configuration](src/.golangci.yml) sets `run.tests: false` to exclude `*_test.go` files from lint analysis. `go test` still compiles and runs those tests. Keep `pgx` at 5.10.0 for compatibility with `pgxmock` 4.9.0; `pgx` 5.11.0 requires a `TypeMap` method that this mock version does not implement.
 

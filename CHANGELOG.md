@@ -14,8 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Creating or updating a pattern now writes the pattern, its chunks and one enrichment job per chunk in a single transaction. Previously `Create` used no transaction at all, so a chunk failure returned 500 with the pattern already stored, and retrying the same name returned 409 with no way forward. A failed write now persists nothing and the name stays free.
+- A failed enrichment-job insert now fails the request instead of returning success. Previously the response was 2xx and the affected chunks were never embedded, with no row to find them by.
+- Enrichment jobs are published to RabbitMQ only after the transaction commits, so a rolled-back write cannot enqueue work for rows that no longer exist. Publication remains best-effort: a queue failure leaves the job rows pending for recovery.
 - Error response `traceId` now identifies the active OpenTelemetry trace rather than the incoming `X-Request-ID`, and is omitted when no valid trace context exists. Request identity and trace identity are now separate values.
 - Request-completion logging moved from the `otelx` Gin middleware to an in-repository implementation that carries the failure cause.
+- `database.postgres.max_open_conns` and `max_idle_conns` are typed `int32`, matching the pool settings they configure. A value too large is now rejected while loading, naming the key, instead of being silently clamped.
 
 ### Removed
 
@@ -23,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A failed enrichment publish now logs the pattern ID alongside the job ID and cause, so a job left pending can be traced back to the pattern it belongs to.
 - Panic recovery now runs inside the observability middleware. A recovered panic produces a 500 completion log, an error span, and request count and duration metrics, and returns the in-flight count to zero; previously those frames unwound before the outer recovery wrote the response.
 
 ### Security
