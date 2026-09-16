@@ -38,14 +38,6 @@ type ServerConfig struct {
 	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
 	IdleTimeout     time.Duration `mapstructure:"idle_timeout"`
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
-	TLS             TLSConfig     `mapstructure:"tls"`
-}
-
-// TLSConfig contains TLS settings for the server.
-type TLSConfig struct {
-	Enabled  bool   `mapstructure:"enabled"`
-	CertFile string `mapstructure:"cert_file"`
-	KeyFile  string `mapstructure:"key_file"`
 }
 
 // DatabaseConfig contains database connection settings.
@@ -269,9 +261,6 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("server.write_timeout", DefaultServerWriteTimeout)
 	v.SetDefault("server.idle_timeout", DefaultServerIdleTimeout)
 	v.SetDefault("server.shutdown_timeout", DefaultServerShutdownTimeout)
-	v.SetDefault("server.tls.enabled", DefaultServerTLSEnabled)
-	v.SetDefault("server.tls.cert_file", "")
-	v.SetDefault("server.tls.key_file", "")
 
 	// PostgreSQL defaults
 	v.SetDefault("database.postgres.host", DefaultPostgresHost)
@@ -466,33 +455,6 @@ func (c *ServerConfig) validate() ValidationErrors {
 			Field:   "server.shutdown_timeout",
 			Message: "must be a positive duration",
 		})
-	}
-
-	// TLS validation
-	if c.TLS.Enabled {
-		if c.TLS.CertFile == "" {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.cert_file",
-				Message: "required when TLS is enabled",
-			})
-		} else if _, err := os.Stat(c.TLS.CertFile); err != nil {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.cert_file",
-				Message: fmt.Sprintf("cannot access file: %v", err),
-			})
-		}
-
-		if c.TLS.KeyFile == "" {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.key_file",
-				Message: "required when TLS is enabled",
-			})
-		} else if _, err := os.Stat(c.TLS.KeyFile); err != nil {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.key_file",
-				Message: fmt.Sprintf("cannot access file: %v", err),
-			})
-		}
 	}
 
 	return errs

@@ -10,7 +10,6 @@ const (
 	DefaultServerWriteTimeout    = 30 * time.Second
 	DefaultServerIdleTimeout     = 120 * time.Second
 	DefaultServerShutdownTimeout = 5 * time.Second
-	DefaultServerTLSEnabled      = false
 )
 
 // Default values for PostgreSQL configuration

@@ -33,7 +33,6 @@ func TestDefaultValues(t *testing.T) {
 	assert.Equal(t, config.DefaultServerWriteTimeout, cfg.Server.WriteTimeout)
 	assert.Equal(t, config.DefaultServerIdleTimeout, cfg.Server.IdleTimeout)
 	assert.Equal(t, config.DefaultServerShutdownTimeout, cfg.Server.ShutdownTimeout)
-	assert.Equal(t, config.DefaultServerTLSEnabled, cfg.Server.TLS.Enabled)
 
 	// PostgreSQL defaults
 	assert.Equal(t, config.DefaultPostgresHost, cfg.Database.Postgres.Host)
@@ -387,24 +386,6 @@ func TestValidation_ServerConfig(t *testing.T) {
 				cfg.Server.ShutdownTimeout = -1 * time.Second
 			},
 			expectError: "server.shutdown_timeout",
-		},
-		{
-			name: "TLS enabled without cert_file",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Server.TLS.Enabled = true
-				cfg.Server.TLS.CertFile = ""
-				cfg.Server.TLS.KeyFile = "/some/key.pem"
-			},
-			expectError: "server.tls.cert_file",
-		},
-		{
-			name: "TLS enabled without key_file",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Server.TLS.Enabled = true
-				cfg.Server.TLS.CertFile = "/some/cert.pem"
-				cfg.Server.TLS.KeyFile = ""
-			},
-			expectError: "server.tls.key_file",
 		},
 	}
 
@@ -1514,11 +1495,6 @@ func validConfig() *config.MnemonicConfig {
 			WriteTimeout:    30 * time.Second,
 			IdleTimeout:     120 * time.Second,
 			ShutdownTimeout: 5 * time.Second,
-			TLS: config.TLSConfig{
-				Enabled:  false,
-				CertFile: "",
-				KeyFile:  "",
-			},
 		},
 		Database: config.DatabaseConfig{
 			Postgres: config.PostgresConfig{

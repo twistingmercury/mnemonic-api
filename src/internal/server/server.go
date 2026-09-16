@@ -213,12 +213,7 @@ func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicCo
 			Str("component", name).
 			Msg("HTTP server listening")
 
-		var err error
-		if cfg.Server.TLS.Enabled {
-			err = srv.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
-		} else {
-			err = srv.ListenAndServe()
-		}
+		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("%s server error: %w", name, err)
 		}
