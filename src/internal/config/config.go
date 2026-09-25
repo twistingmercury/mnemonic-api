@@ -182,62 +182,57 @@ func (e ValidationErrors) Error() string {
 	return sb.String()
 }
 
-// Load loads configuration from all sources with the following precedence:
-// 1. Compiled defaults (lowest priority)
+// LoadWithFlags loads, unmarshals and validates the configuration that
+// Resolve assembles from flags. Going through Resolve keeps the server and any
+// other reader of the same sources, such as the --health probe, from drifting
+// apart on precedence or file selection.
+func LoadWithFlags(flags *pflag.FlagSet) (*MnemonicConfig, error) {
+	v, err := Resolve(flags)
+	if err != nil {
+		return nil, err
+	}
+	return LoadFromViper(v)
+}
+
+// Resolve layers the configuration sources into a viper instance without
+// unmarshalling or validating them, for callers that need a few keys and must
+// not fail on unrelated sections (for example missing credentials).
+//
+// Precedence, lowest to highest:
+// 1. Compiled defaults
 // 2. Configuration file
-// 3. Environment variables (highest priority)
+// 3. Environment variables
 //
 // The config file is discovered in the following order:
-// 1. --config flag (if provided)
+// 1. The "config" flag in flags, if flags is non-nil and the flag was set
 // 2. $MNEMONIC_CONFIG_FILE (if set)
 // 3. /etc/mnemonic/config.yaml (production)
 // 4. ./config.yaml (development)
-func Load() (*MnemonicConfig, error) {
-	return LoadWithFlags(nil)
-}
-
-// LoadWithFlags loads configuration using the provided flagset.
-// Pass nil to use the default flags.
-func LoadWithFlags(flags *pflag.FlagSet) (*MnemonicConfig, error) {
+//
+// Finding no file at all is fine and yields defaults plus environment, but
+// once a file is selected by any of these it must be readable and parse, so a
+// broken file never silently falls back to defaults.
+func Resolve(flags *pflag.FlagSet) (*viper.Viper, error) {
 	v := viper.New()
-
-	// Set defaults first
 	SetDefaults(v)
 
-	// Determine config file path
-	configPath := findConfigFile(flags)
-	if configPath != "" {
+	if configPath := findConfigFile(flags); configPath != "" {
 		v.SetConfigFile(configPath)
 		if err := v.ReadInConfig(); err != nil {
-			// Only return error if the config file was explicitly specified
-			if isExplicitConfigPath(flags) {
-				return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
-			}
-			// Otherwise, silently continue with defaults + env vars
+			return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 		}
 	}
 
-	// Set up environment variable binding
 	v.SetEnvPrefix(EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Unmarshal into config struct
-	cfg := &MnemonicConfig{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	// Validate configuration
-	if errs := cfg.Validate(); len(errs) > 0 {
-		return nil, errs
-	}
-
-	return cfg, nil
+	return v, nil
 }
 
-// LoadFromViper loads configuration from an already-configured viper instance.
-// This is primarily useful for testing.
+// LoadFromViper unmarshals and validates an already-configured viper instance.
+// LoadWithFlags uses it on the output of Resolve; tests use it to load from a
+// hand-built instance.
 func LoadFromViper(v *viper.Viper) (*MnemonicConfig, error) {
 	cfg := &MnemonicConfig{}
 	if err := v.Unmarshal(cfg); err != nil {
@@ -362,23 +357,6 @@ func findConfigFile(flags *pflag.FlagSet) string {
 	}
 
 	return ""
-}
-
-// isExplicitConfigPath returns true if a config path was explicitly provided.
-func isExplicitConfigPath(flags *pflag.FlagSet) bool {
-	// Check --config flag
-	if flags != nil {
-		if configFlag := flags.Lookup("config"); configFlag != nil && configFlag.Changed {
-			return true
-		}
-	}
-
-	// Check MNEMONIC_CONFIG_FILE environment variable
-	if os.Getenv(EnvConfigFile) != "" {
-		return true
-	}
-
-	return false
 }
 
 // Validate validates the configuration and returns any validation errors.

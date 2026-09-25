@@ -1367,6 +1367,124 @@ func TestLoadWithFlags_PermissionDenied(t *testing.T) {
 	assert.Contains(t, err.Error(), path)
 }
 
+// TestLoadWithFlags_MalformedDiscoveredFile verifies a discovered file is held
+// to the same standard as an explicit one: a broken ./config.yaml must fail
+// startup rather than be skipped in favour of defaults.
+func TestLoadWithFlags_MalformedDiscoveredFile(t *testing.T) {
+	dir := isolateConfigSources(t)
+	writeConfigFile(t, dir, "config.yaml", "server: [unclosed\n")
+
+	cfg, err := config.LoadWithFlags(configFlagSet(t, ""))
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "failed to read config file "+config.DevelopmentConfigPath)
+}
+
+// TestLoadWithFlags_PermissionDeniedDiscoveredFile verifies a discovered file
+// that exists but cannot be opened fails loudly and keeps the permission cause
+// inspectable through the wrapped error.
+func TestLoadWithFlags_PermissionDeniedDiscoveredFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+	dir := isolateConfigSources(t)
+	path := writeConfigFile(t, dir, "config.yaml", "server:\n  port: 9002\n")
+	require.NoError(t, os.Chmod(path, 0o000))
+
+	cfg, err := config.LoadWithFlags(configFlagSet(t, ""))
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, fs.ErrPermission)
+	assert.Contains(t, err.Error(), config.DevelopmentConfigPath)
+}
+
+// TestLoadWithFlags_NoConfigFile verifies that finding no candidate file is not
+// an error: the loader starts on defaults plus environment.
+func TestLoadWithFlags_NoConfigFile(t *testing.T) {
+	isolateConfigSources(t)
+
+	cfg, err := config.LoadWithFlags(configFlagSet(t, ""))
+	require.NoError(t, err)
+	assert.Equal(t, config.DefaultServerPort, cfg.Server.Port)
+}
+
+// TestResolve_AgreesWithLoadWithFlags pins that Resolve and LoadWithFlags see
+// the same server.port for every file-selection route with an environment
+// override on top. The --health probe reads Resolve while the server reads
+// LoadWithFlags, so any divergence probes the wrong port.
+func TestResolve_AgreesWithLoadWithFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		file     string
+		viaFlag  bool
+		viaEnv   bool
+		envPort  string
+		wantPort int
+	}{
+		{"flag-selected file", "flag.yaml", true, false, "", 9002},
+		{"env-selected file", "env.yaml", false, true, "", 9002},
+		{"discovered file", config.DevelopmentConfigPath, false, false, "", 9002},
+		{"env overrides flag-selected file", "flag.yaml", true, false, "9100", 9100},
+		{"env overrides env-selected file", "env.yaml", false, true, "9100", 9100},
+		{"env overrides discovered file", config.DevelopmentConfigPath, false, false, "9100", 9100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := isolateConfigSources(t)
+			path := writeConfigFile(t, dir, tt.file, "server:\n  port: 9002\n")
+			flags := configFlagSet(t, "")
+			if tt.viaFlag {
+				flags = configFlagSet(t, path)
+			}
+			if tt.viaEnv {
+				t.Setenv(config.EnvConfigFile, path)
+			}
+			if tt.envPort != "" {
+				t.Setenv("MNEMONIC_SERVER_PORT", tt.envPort)
+			}
+
+			v, err := config.Resolve(flags)
+			require.NoError(t, err)
+			cfg, err := config.LoadWithFlags(flags)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantPort, v.GetInt("server.port"))
+			assert.Equal(t, tt.wantPort, cfg.Server.Port)
+		})
+	}
+}
+
+// TestResolve_DoesNotValidate verifies Resolve returns an invalid
+// configuration as-is: callers that need one key must not be blocked by
+// missing credentials or a bad value elsewhere, which LoadWithFlags rejects.
+func TestResolve_DoesNotValidate(t *testing.T) {
+	dir := isolateConfigSources(t)
+	path := writeConfigFile(t, dir, "flag.yaml", "server:\n  port: 9002\nlogging:\n  level: nonsense\n")
+	flags := configFlagSet(t, path)
+
+	_, err := config.LoadWithFlags(flags)
+	require.Error(t, err, "precondition: this config must fail validation")
+
+	v, err := config.Resolve(flags)
+	require.NoError(t, err)
+	assert.Equal(t, 9002, v.GetInt("server.port"))
+	assert.Equal(t, "nonsense", v.GetString("logging.level"))
+}
+
+// TestResolve_UnreadableSelectedFile verifies the fail-loud rule for a
+// selected file lives in Resolve itself, so non-validating callers inherit it.
+func TestResolve_UnreadableSelectedFile(t *testing.T) {
+	dir := isolateConfigSources(t)
+	missing := filepath.Join(dir, "missing.yaml")
+
+	v, err := config.Resolve(configFlagSet(t, missing))
+	require.Error(t, err)
+	assert.Nil(t, v)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	assert.Contains(t, err.Error(), "failed to read config file "+missing)
+}
+
 // TestBooleanEnvironmentVariables tests boolean parsing from env vars.
 func TestBooleanEnvironmentVariables(t *testing.T) {
 	tests := []struct {

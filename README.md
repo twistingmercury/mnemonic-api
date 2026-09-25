@@ -59,6 +59,7 @@ Error response `traceId` identifies the active OpenTelemetry trace and is omitte
 ## Key Considerations
 
 - The current API deployment model assumes a trusted environment and does not authenticate REST requests.
+- TLS terminates at Envoy or an equivalent reverse proxy. The API serves plain HTTP behind it and has no in-process TLS settings, so the network path between the proxy and the API must be trusted. Encrypting that hop, for example with mesh mTLS, is proxy or sidecar configuration, not application code.
 - Pattern creation is asynchronous and returns `202 Accepted`; semantic results become available after enrichment completes.
 - A create or update writes the pattern, its chunks and one enrichment job per chunk in one transaction. A failure persists nothing, so a rejected create leaves its name free to retry. Publishing those jobs to RabbitMQ happens after the commit and is best-effort: if it fails the rows remain pending rather than being lost.
 - PostgreSQL, Neo4j, RabbitMQ, and an OpenAI API key are required for a working runtime.
@@ -94,7 +95,16 @@ make start
 
 ### Configuration
 
-Configuration precedence is built-in defaults, an optional YAML file, then `MNEMONIC_` environment variables. Set `MNEMONIC_CONFIG_FILE` to choose a file explicitly; otherwise the service checks `/etc/mnemonic/config.yaml` and `./config.yaml`.
+Configuration precedence is built-in defaults, an optional YAML file, then `MNEMONIC_` environment variables. Only one file is read, chosen in this order:
+
+1. The `--config <path>` flag.
+2. The `MNEMONIC_CONFIG_FILE` environment variable.
+3. `/etc/mnemonic/config.yaml`, if it exists.
+4. `./config.yaml`, if it exists.
+
+Finding no file is fine: the service starts on defaults plus environment variables. Once a file is selected, by any of these routes, it must be readable and valid YAML. A missing explicit path, a permission error or a parse error stops startup with `failed to read config file <path>` instead of falling back to defaults.
+
+`--health` probes `http://localhost:<port>/health` and exits non-zero unless it gets `200`. It resolves `server.port` from the same flag, file and environment sources as the server, but does not validate the rest of the configuration, so it runs without database, OpenAI or RabbitMQ credentials. An unreadable config file or a port outside 1-65535 fails the probe without sending a request.
 
 Nested keys use underscores in environment variables. For example, `server.port` becomes `MNEMONIC_SERVER_PORT`, and the OpenAI credential is `MNEMONIC_OPENAI_API_KEY`. This API has no `mcp.*` configuration; MCP settings belong to `mnemonic-mcp`.
 

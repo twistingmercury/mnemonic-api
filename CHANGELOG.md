@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bounded failure diagnostics for unexpected request errors: a single private request-completion log records the status, route template, duration, request ID, active trace and span IDs, and a redacted cause, and the active span records the exception.
 - `X-Request-ID` validation. The API echoes identifiers of up to 128 ASCII letters, digits, dots, underscores, or hyphens, and generates a UUID when the header is missing or invalid.
+- A `--config <path>` flag that selects the configuration file and takes priority over `MNEMONIC_CONFIG_FILE`. Previously the loader looked for the flag but the binary never registered it, so passing it failed as an unknown flag.
 
 ### Changed
 
@@ -20,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error response `traceId` now identifies the active OpenTelemetry trace rather than the incoming `X-Request-ID`, and is omitted when no valid trace context exists. Request identity and trace identity are now separate values.
 - Request-completion logging moved from the `otelx` Gin middleware to an in-repository implementation that carries the failure cause.
 - `database.postgres.max_open_conns` and `max_idle_conns` are typed `int32`, matching the pool settings they configure. A value too large is now rejected while loading, naming the key, instead of being silently clamped.
+- A discovered `/etc/mnemonic/config.yaml` or `./config.yaml` that exists but cannot be read or parsed now stops startup with `failed to read config file <path>`. Previously only an explicitly selected file failed; a broken discovered file was skipped and the service started on defaults and environment variables.
 
 ### Removed
 
@@ -29,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A failed enrichment publish now logs the pattern ID alongside the job ID and cause, so a job left pending can be traced back to the pattern it belongs to.
 - Panic recovery now runs inside the observability middleware. A recovered panic produces a 500 completion log, an error span, and request count and duration metrics, and returns the in-flight count to zero; previously those frames unwound before the outer recovery wrote the response.
+- The `--health` probe now resolves `server.port` from the same config file as the server, selected by `--config`, `MNEMONIC_CONFIG_FILE` or discovery, with environment variables still on top. Previously it read only defaults and environment variables, so a port set only in the config file sent the Docker health check to the wrong port. It still skips full validation and needs no service credentials.
+- The `--health` probe now fails with a configuration error, without sending a request, when the config file cannot be read or `server.port` is not a number in 1-65535. Previously a non-numeric port was read as 0 and the probe dialled `localhost:0`.
 
 ### Security
 
