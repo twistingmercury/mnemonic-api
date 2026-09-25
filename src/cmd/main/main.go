@@ -2,23 +2,19 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/server"
 	"github.com/twistingmercury/mnemonic-api/internal/version"
 )
-
-var verFlag = pflag.Bool("version", false, "Displays current version information for mnemonic")
-var healthFlag = pflag.Bool("health", false, "Get the current health of the service")
 
 // @title Mnemonic API
 // @version 1.0
@@ -27,19 +23,28 @@ var healthFlag = pflag.Bool("health", false, "Get the current health of the serv
 // @BasePath /v1/api
 // @schemes http
 func main() {
-	pflag.Parse()
+	flags, err := parseFlags(os.Args[1:])
+	// pflag has already printed usage for --help, but with ContinueOnError it
+	// leaves reporting every other parse error to the caller.
+	if errors.Is(err, pflag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
-	if *verFlag {
+	if showVersion, _ := flags.GetBool("version"); showVersion {
 		println(version.Print())
 		os.Exit(0)
 	}
 
-	if *healthFlag {
-		exitCode := checkHealth()
+	if checkOnly, _ := flags.GetBool("health"); checkOnly {
+		exitCode := checkHealth(flags)
 		os.Exit(exitCode)
 	}
 
-	cfg, err := config.Load()
+	cfg, err := config.LoadWithFlags(flags)
 
 	if err != nil {
 		log.Fatalf("failed to load configuration: %s", err)
@@ -50,8 +55,23 @@ func main() {
 	// is needed here.
 
 	if err := server.ListenAndServe(cfg); err != nil {
-		log.Fatalf("exited with err: %s\n", err.Error())
+		log.Fatalf("exited with err: %s\n", err.Error()) // #nosec G706 -- taint is the process's own argv (--config), set by the operator who launched it
 	}
+}
+
+// parseFlags builds a fresh flag set instead of using pflag.CommandLine so the
+// entry point holds no global flag state and can be parsed repeatedly in tests.
+// ContinueOnError returns parse failures to the caller rather than exiting.
+func parseFlags(args []string) (*pflag.FlagSet, error) {
+	flags := pflag.NewFlagSet("mnemonic-api", pflag.ContinueOnError)
+	flags.Bool("version", false, "Displays current version information for mnemonic")
+	flags.Bool("health", false, "Get the current health of the service")
+	flags.String("config", "", "Path to the configuration file; alternatively set "+config.EnvConfigFile)
+
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	return flags, nil
 }
 
 // healthCheckTimeout is the HTTP client timeout for the CLI health probe.
@@ -61,13 +81,19 @@ const healthCheckTimeout = 3 * time.Second
 // checkHealth makes an HTTP GET request to the running server's /health
 // endpoint and reports the result. It is designed for use as a Docker
 // HEALTHCHECK command in scratch/static containers where curl is unavailable.
-func checkHealth() (exitCode int) {
-	port := resolveServerPort()
+// The target is plain HTTP on localhost because TLS terminates at the reverse
+// proxy, not in this process.
+func checkHealth(flags *pflag.FlagSet) (exitCode int) {
+	port, err := resolveServerPort(flags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unhealthy: %v\n", err)
+		return 1
+	}
 	url := fmt.Sprintf("http://localhost:%d%s", port, config.DefaultHealthPath)
 
 	client := &http.Client{Timeout: healthCheckTimeout}
 
-	resp, err := client.Get(url) // #nosec G107 -- URL is constructed from local config, not user input
+	resp, err := client.Get(url) // #nosec G107 G704 -- host is literal localhost, port is range-checked, path is constant
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unhealthy: %v\n", err)
 		return 1
@@ -88,19 +114,26 @@ func checkHealth() (exitCode int) {
 	return 1
 }
 
-// resolveServerPort reads the server port from config sources (env vars,
-// config file, defaults) without performing full validation. This avoids
-// requiring database credentials just to run a health probe.
-func resolveServerPort() int {
-	v := viper.New()
-	config.SetDefaults(v)
+// resolveServerPort reads server.port through the same resolver the server
+// loads from, so a port set only in the config file is still probed, but
+// without full validation: the probe must not need database, OpenAI or queue
+// credentials, nor fail on an unrelated bad setting.
+func resolveServerPort(flags *pflag.FlagSet) (int, error) {
+	v, err := config.Resolve(flags)
+	if err != nil {
+		return 0, err
+	}
 
-	// Allow env-var override (e.g. MNEMONIC_SERVER_PORT maps to server.port).
-	v.SetEnvPrefix(config.EnvPrefix)
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	return v.GetInt("server.port")
+	// UnmarshalKey applies the same decoding as the server's Unmarshal, so a
+	// value the server would reject is rejected here too rather than read as 0.
+	var port int
+	if err := v.UnmarshalKey("server.port", &port); err != nil {
+		return 0, fmt.Errorf("invalid server.port: %w", err)
+	}
+	if port < 1 || port > 65535 {
+		return 0, fmt.Errorf("server.port %d is outside 1-65535", port)
+	}
+	return port, nil
 }
 
 // formatHealthStatus returns a human-readable one-line summary from the

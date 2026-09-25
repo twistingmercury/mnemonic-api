@@ -54,6 +54,10 @@ type Repository interface {
 
 	// DeleteFailed removes failed jobs older than the retention period.
 	DeleteFailed(ctx context.Context, retention time.Duration) (int64, error)
+
+	// WithTx returns a Repository that executes all operations within db.
+	// Use this to enlist the repository in a caller-owned transaction.
+	WithTx(db repository.DBTX) Repository
 }
 
 // pgxRepository is a PostgreSQL implementation of Repository using pgx.
@@ -502,4 +506,8 @@ func (r *pgxRepository) DeleteFailed(ctx context.Context, retention time.Duratio
 	}
 
 	return result.RowsAffected(), nil
+}
+
+func (r *pgxRepository) WithTx(db repository.DBTX) Repository {
+	return &pgxRepository{db: db}
 }

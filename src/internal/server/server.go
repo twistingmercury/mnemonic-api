@@ -15,8 +15,11 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/google/uuid"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
-	"github.com/twistingmercury/mnemonic-api/internal/database"
+	"github.com/twistingmercury/mnemonic-api/internal/database/graphdb"
+	"github.com/twistingmercury/mnemonic-api/internal/database/vectordb"
+	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/operations"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
@@ -30,7 +33,6 @@ import (
 	patternsvc "github.com/twistingmercury/mnemonic-api/internal/service/pattern"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
 	"github.com/twistingmercury/mnemonic-api/internal/telemetry"
-	otelxgin "github.com/twistingmercury/otelx/middleware/gin"
 )
 
 // ListenAndServe starts the mnemonic server. It initializes telemetry,
@@ -94,7 +96,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	}
 
 	// Build the Admin API router.
-	router := setupRouter(tel, requestMetrics)
+	router := setupRouter(logger, requestMetrics)
 	operations.SetupHandlers(router, health.Descriptors())
 	RegisterAPIRoutes(router, svc, cfg.Vocabulary)
 
@@ -124,7 +126,7 @@ func openDatabases(ctx context.Context, cfg *config.MnemonicConfig, logger zerol
 		Str("dsn", cfg.Database.Postgres.SafeDSN()).
 		Msg("connecting to PostgreSQL")
 
-	pgPool, err := database.NewPostgresPool(ctx, cfg.Database.Postgres)
+	pgPool, err := vectordb.NewPostgresPool(ctx, cfg.Database.Postgres)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
@@ -135,7 +137,7 @@ func openDatabases(ctx context.Context, cfg *config.MnemonicConfig, logger zerol
 		Str("database", cfg.Database.Neo4j.Database).
 		Msg("connecting to Neo4j")
 
-	neo4jDriver, err := database.NewNeo4jDriver(ctx, cfg.Database.Neo4j)
+	neo4jDriver, err := graphdb.NewNeo4jDriver(ctx, cfg.Database.Neo4j)
 	if err != nil {
 		pgPool.Close()
 		return nil, nil, fmt.Errorf("failed to connect to Neo4j: %w", err)
@@ -213,12 +215,7 @@ func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicCo
 			Str("component", name).
 			Msg("HTTP server listening")
 
-		var err error
-		if cfg.Server.TLS.Enabled {
-			err = srv.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
-		} else {
-			err = srv.ListenAndServe()
-		}
+		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("%s server error: %w", name, err)
 		}
@@ -242,36 +239,40 @@ func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicCo
 }
 
 // setupRouter creates and configures the Gin router with middleware.
-func setupRouter(tel *telemetry.Telemetry, requestMetrics *middleware.RequestMetrics) *gin.Engine {
-	// Use gin.New() instead of gin.Default() to avoid duplicate logging
+func setupRouter(logger zerolog.Logger, requestMetrics *middleware.RequestMetrics) *gin.Engine {
 	router := gin.New()
-
-	// Recovery middleware (keep this)
-	router.Use(gin.Recovery())
-
-	// Correlation ID middleware: echo X-Request-ID from request to response.
 	router.Use(func(c *gin.Context) {
-		if rid := c.GetHeader("X-Request-ID"); rid != "" {
-			c.Header("X-Request-ID", rid)
+		// Only a bounded identifier alphabet may enter headers and private logs.
+		rid := c.GetHeader("X-Request-ID")
+		valid := len(rid) > 0 && len(rid) <= 128
+		for _, r := range rid {
+			allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
+			if !allowed {
+				valid = false
+				break
+			}
 		}
+		if !valid {
+			rid = uuid.NewString()
+		}
+		c.Header("X-Request-ID", rid)
 		c.Next()
 	})
-
-	// Use exported DefaultSkipPaths from middleware package
 	skipPaths := middleware.DefaultSkipPaths
-
-	// Tracing middleware using otelgin
 	router.Use(middleware.TracingMiddlewareWithSkipPaths("mnemonic", skipPaths))
-
-	// otelx logging middleware with trace correlation
-	router.Use(otelxgin.LoggingMiddleware(tel.Otelx(),
-		otelxgin.WithSkipPaths("/health", "/metrics"),
-		otelxgin.WithRequestHeaders("X-Request-ID", "X-Correlation-ID"),
-	))
-
-	// Request metrics middleware
+	router.Use(middleware.CompletionLogging(logger, skipPaths))
 	router.Use(requestMetrics.MiddlewareWithSkipPaths(skipPaths))
-
+	// Recovery must be inside every completion wrapper. Do not use Gin's default
+	// recovery, which prints raw panic values and request headers to stderr.
+	router.Use(func(c *gin.Context) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				handlers.RespondError(c, fmt.Errorf("panic: %v", recovered))
+				c.Abort()
+			}
+		}()
+		c.Next()
+	})
 	return router
 }
 

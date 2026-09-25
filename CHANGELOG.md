@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Bounded failure diagnostics for unexpected request errors: a single private request-completion log records the status, route template, duration, request ID, active trace and span IDs, and a redacted cause, and the active span records the exception.
+- `X-Request-ID` validation. The API echoes identifiers of up to 128 ASCII letters, digits, dots, underscores, or hyphens, and generates a UUID when the header is missing or invalid.
+- A `--config <path>` flag that selects the configuration file and takes priority over `MNEMONIC_CONFIG_FILE`. Previously the loader looked for the flag but the binary never registered it, so passing it failed as an unknown flag.
+
+### Changed
+
+- Creating or updating a pattern now writes the pattern, its chunks and one enrichment job per chunk in a single transaction. Previously `Create` used no transaction at all, so a chunk failure returned 500 with the pattern already stored, and retrying the same name returned 409 with no way forward. A failed write now persists nothing and the name stays free.
+- A failed enrichment-job insert now fails the request instead of returning success. Previously the response was 2xx and the affected chunks were never embedded, with no row to find them by.
+- Enrichment jobs are published to RabbitMQ only after the transaction commits, so a rolled-back write cannot enqueue work for rows that no longer exist. Publication remains best-effort: a queue failure leaves the job rows pending for recovery.
+- Error response `traceId` now identifies the active OpenTelemetry trace rather than the incoming `X-Request-ID`, and is omitted when no valid trace context exists. Request identity and trace identity are now separate values.
+- Request-completion logging moved from the `otelx` Gin middleware to an in-repository implementation that carries the failure cause.
+- `database.postgres.max_open_conns` and `max_idle_conns` are typed `int32`, matching the pool settings they configure. A value too large is now rejected while loading, naming the key, instead of being silently clamped.
+- A discovered `/etc/mnemonic/config.yaml` or `./config.yaml` that exists but cannot be read or parsed now stops startup with `failed to read config file <path>`. Previously only an explicitly selected file failed; a broken discovered file was skipped and the service started on defaults and environment variables.
+
+### Removed
+
+- In-process TLS support and `server.tls.*` configuration. TLS terminates at the reverse proxy and the API serves plain HTTP behind it, which is what the Docker health probe already assumed.
+
+### Fixed
+
+- A failed enrichment publish now logs the pattern ID alongside the job ID and cause, so a job left pending can be traced back to the pattern it belongs to.
+- Panic recovery now runs inside the observability middleware. A recovered panic produces a 500 completion log, an error span, and request count and duration metrics, and returns the in-flight count to zero; previously those frames unwound before the outer recovery wrote the response.
+- The `--health` probe now resolves `server.port` from the same config file as the server, selected by `--config`, `MNEMONIC_CONFIG_FILE` or discovery, with environment variables still on top. Previously it read only defaults and environment variables, so a port set only in the config file sent the Docker health check to the wrong port. It still skips full validation and needs no service credentials.
+- The `--health` probe now fails with a configuration error, without sending a request, when the config file cannot be read or `server.port` is not a number in 1-65535. Previously a non-numeric port was read as 0 and the probe dialled `localhost:0`.
+
+### Security
+
+- Public 503 responses return a stable `service temporarily unavailable` detail instead of the upstream failure text, which could disclose upstream response bodies to API clients.
+- Private diagnostics redact upstream response bodies, URLs, quoted values, and credential or content fields, and exclude request bodies and query strings. Gin's default recovery, which prints raw panic values and request headers to stderr, is no longer used.
+
 ## [v0.3.4] - 2026-09-09
 
 ### Changed

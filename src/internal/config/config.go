@@ -38,14 +38,6 @@ type ServerConfig struct {
 	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
 	IdleTimeout     time.Duration `mapstructure:"idle_timeout"`
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
-	TLS             TLSConfig     `mapstructure:"tls"`
-}
-
-// TLSConfig contains TLS settings for the server.
-type TLSConfig struct {
-	Enabled  bool   `mapstructure:"enabled"`
-	CertFile string `mapstructure:"cert_file"`
-	KeyFile  string `mapstructure:"key_file"`
 }
 
 // DatabaseConfig contains database connection settings.
@@ -62,8 +54,8 @@ type PostgresConfig struct {
 	Username        string        `mapstructure:"username"`
 	Password        string        `mapstructure:"password"` // #nosec G117 -- credentials loaded from config/env, not serialized
 	SSLMode         string        `mapstructure:"ssl_mode"`
-	MaxOpenConns    int           `mapstructure:"max_open_conns"`
-	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	MaxOpenConns    int32         `mapstructure:"max_open_conns"`
+	MaxIdleConns    int32         `mapstructure:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
 }
 
@@ -190,62 +182,57 @@ func (e ValidationErrors) Error() string {
 	return sb.String()
 }
 
-// Load loads configuration from all sources with the following precedence:
-// 1. Compiled defaults (lowest priority)
+// LoadWithFlags loads, unmarshals and validates the configuration that
+// Resolve assembles from flags. Going through Resolve keeps the server and any
+// other reader of the same sources, such as the --health probe, from drifting
+// apart on precedence or file selection.
+func LoadWithFlags(flags *pflag.FlagSet) (*MnemonicConfig, error) {
+	v, err := Resolve(flags)
+	if err != nil {
+		return nil, err
+	}
+	return LoadFromViper(v)
+}
+
+// Resolve layers the configuration sources into a viper instance without
+// unmarshalling or validating them, for callers that need a few keys and must
+// not fail on unrelated sections (for example missing credentials).
+//
+// Precedence, lowest to highest:
+// 1. Compiled defaults
 // 2. Configuration file
-// 3. Environment variables (highest priority)
+// 3. Environment variables
 //
 // The config file is discovered in the following order:
-// 1. --config flag (if provided)
+// 1. The "config" flag in flags, if flags is non-nil and the flag was set
 // 2. $MNEMONIC_CONFIG_FILE (if set)
 // 3. /etc/mnemonic/config.yaml (production)
 // 4. ./config.yaml (development)
-func Load() (*MnemonicConfig, error) {
-	return LoadWithFlags(nil)
-}
-
-// LoadWithFlags loads configuration using the provided flagset.
-// Pass nil to use the default flags.
-func LoadWithFlags(flags *pflag.FlagSet) (*MnemonicConfig, error) {
+//
+// Finding no file at all is fine and yields defaults plus environment, but
+// once a file is selected by any of these it must be readable and parse, so a
+// broken file never silently falls back to defaults.
+func Resolve(flags *pflag.FlagSet) (*viper.Viper, error) {
 	v := viper.New()
-
-	// Set defaults first
 	SetDefaults(v)
 
-	// Determine config file path
-	configPath := findConfigFile(flags)
-	if configPath != "" {
+	if configPath := findConfigFile(flags); configPath != "" {
 		v.SetConfigFile(configPath)
 		if err := v.ReadInConfig(); err != nil {
-			// Only return error if the config file was explicitly specified
-			if isExplicitConfigPath(flags) {
-				return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
-			}
-			// Otherwise, silently continue with defaults + env vars
+			return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 		}
 	}
 
-	// Set up environment variable binding
 	v.SetEnvPrefix(EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Unmarshal into config struct
-	cfg := &MnemonicConfig{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	// Validate configuration
-	if errs := cfg.Validate(); len(errs) > 0 {
-		return nil, errs
-	}
-
-	return cfg, nil
+	return v, nil
 }
 
-// LoadFromViper loads configuration from an already-configured viper instance.
-// This is primarily useful for testing.
+// LoadFromViper unmarshals and validates an already-configured viper instance.
+// LoadWithFlags uses it on the output of Resolve; tests use it to load from a
+// hand-built instance.
 func LoadFromViper(v *viper.Viper) (*MnemonicConfig, error) {
 	cfg := &MnemonicConfig{}
 	if err := v.Unmarshal(cfg); err != nil {
@@ -269,9 +256,6 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("server.write_timeout", DefaultServerWriteTimeout)
 	v.SetDefault("server.idle_timeout", DefaultServerIdleTimeout)
 	v.SetDefault("server.shutdown_timeout", DefaultServerShutdownTimeout)
-	v.SetDefault("server.tls.enabled", DefaultServerTLSEnabled)
-	v.SetDefault("server.tls.cert_file", "")
-	v.SetDefault("server.tls.key_file", "")
 
 	// PostgreSQL defaults
 	v.SetDefault("database.postgres.host", DefaultPostgresHost)
@@ -375,23 +359,6 @@ func findConfigFile(flags *pflag.FlagSet) string {
 	return ""
 }
 
-// isExplicitConfigPath returns true if a config path was explicitly provided.
-func isExplicitConfigPath(flags *pflag.FlagSet) bool {
-	// Check --config flag
-	if flags != nil {
-		if configFlag := flags.Lookup("config"); configFlag != nil && configFlag.Changed {
-			return true
-		}
-	}
-
-	// Check MNEMONIC_CONFIG_FILE environment variable
-	if os.Getenv(EnvConfigFile) != "" {
-		return true
-	}
-
-	return false
-}
-
 // Validate validates the configuration and returns any validation errors.
 func (c *MnemonicConfig) Validate() ValidationErrors {
 	var errs ValidationErrors
@@ -466,33 +433,6 @@ func (c *ServerConfig) validate() ValidationErrors {
 			Field:   "server.shutdown_timeout",
 			Message: "must be a positive duration",
 		})
-	}
-
-	// TLS validation
-	if c.TLS.Enabled {
-		if c.TLS.CertFile == "" {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.cert_file",
-				Message: "required when TLS is enabled",
-			})
-		} else if _, err := os.Stat(c.TLS.CertFile); err != nil {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.cert_file",
-				Message: fmt.Sprintf("cannot access file: %v", err),
-			})
-		}
-
-		if c.TLS.KeyFile == "" {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.key_file",
-				Message: "required when TLS is enabled",
-			})
-		} else if _, err := os.Stat(c.TLS.KeyFile); err != nil {
-			errs = append(errs, ValidationError{
-				Field:   "server.tls.key_file",
-				Message: fmt.Sprintf("cannot access file: %v", err),
-			})
-		}
 	}
 
 	return errs

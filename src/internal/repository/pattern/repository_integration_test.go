@@ -690,7 +690,8 @@ func TestIntegration_ListWithEnrichmentStatusFilter(t *testing.T) {
 
 	enrichedPattern := testIntegrationPattern("status-filter-enriched")
 	require.NoError(t, repo.Create(ctx, enrichedPattern))
-	require.NoError(t, repo.UpdateEmbedding(ctx, enrichedPattern.ID, createNormalizedEmbedding(0)))
+	// Embeddings live on chunks, not patterns; the status column alone is what
+	// List filters on here.
 	require.NoError(t, repo.UpdateEnrichmentStatus(ctx, enrichedPattern.ID, "enriched", nil))
 
 	failedPattern := testIntegrationPattern("status-filter-failed")

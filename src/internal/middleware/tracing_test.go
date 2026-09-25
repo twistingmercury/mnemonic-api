@@ -1,110 +1,82 @@
 package middleware_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func init() {
-	gin.SetMode(gin.TestMode)
-}
+func init() { gin.SetMode(gin.TestMode) }
 
 func TestTracingMiddleware(t *testing.T) {
-	router := gin.New()
-	router.Use(middleware.TracingMiddleware("test-service"))
-
-	router.GET("/test", func(c *gin.Context) {
-		// Verify span is accessible in context (may not be valid without configured provider)
-		span := trace.SpanFromContext(c.Request.Context())
-		_ = span // Span is present even if not valid
-		c.Status(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	// Note: Without a configured tracer provider, spans may not be valid
-	// This test primarily verifies the middleware doesn't panic
-}
-
-func TestTracingMiddlewareSkipsHealthPath(t *testing.T) {
-	router := gin.New()
-	router.Use(middleware.TracingMiddleware("test-service"))
-
-	healthCalled := false
-	router.GET("/health", func(c *gin.Context) {
-		healthCalled = true
-		c.Status(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, healthCalled)
-}
-
-func TestTracingMiddlewareSkipsMetricsPath(t *testing.T) {
-	router := gin.New()
-	router.Use(middleware.TracingMiddleware("test-service"))
-
-	metricsCalled := false
-	router.GET("/metrics", func(c *gin.Context) {
-		metricsCalled = true
-		c.Status(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, metricsCalled)
-}
-
-func TestTracingMiddlewareWithSkipPaths(t *testing.T) {
-	customSkipPaths := []string{"/custom/skip", "/another/skip"}
-
-	router := gin.New()
-	router.Use(middleware.TracingMiddlewareWithSkipPaths("test-service", customSkipPaths))
-
-	customSkipCalled := false
-	router.GET("/custom/skip", func(c *gin.Context) {
-		customSkipCalled = true
-		c.Status(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/custom/skip", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, customSkipCalled)
-}
-
-func TestTracingMiddlewareDoesNotSkipRegularPaths(t *testing.T) {
-	router := gin.New()
-	router.Use(middleware.TracingMiddleware("test-service"))
-
-	apiCalled := false
-	router.GET("/api/v1/test", func(c *gin.Context) {
-		apiCalled = true
-		c.Status(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, apiCalled)
+	for _, tc := range []struct {
+		name, path   string
+		custom, skip bool
+	}{
+		{"regular", "/test", false, false},
+		{"health", "/health", false, true},
+		{"metrics", "/metrics", false, true},
+		{"custom skip", "/custom/skip", true, true},
+		{"another custom skip", "/another/skip", true, true},
+		{"custom regular", "/api/v1/test", true, false},
+		{"custom replaces defaults", "/health", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exporter := tracetest.NewInMemoryExporter()
+			tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+			oldTP, oldProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+			otel.SetTracerProvider(tp)
+			otel.SetTextMapPropagator(propagation.TraceContext{})
+			t.Cleanup(func() {
+				otel.SetTracerProvider(oldTP)
+				otel.SetTextMapPropagator(oldProp)
+				require.NoError(t, tp.Shutdown(context.Background()))
+			})
+			router := gin.New()
+			if tc.custom {
+				router.Use(middleware.TracingMiddlewareWithSkipPaths("test-service", []string{"/custom/skip", "/another/skip"}))
+			} else {
+				router.Use(middleware.TracingMiddleware("test-service"))
+			}
+			var active trace.SpanContext
+			called := false
+			router.GET(tc.path, func(c *gin.Context) {
+				called = true
+				active = trace.SpanContextFromContext(c.Request.Context())
+				c.Status(http.StatusAccepted)
+			})
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusAccepted, w.Code)
+			require.True(t, called)
+			spans := exporter.GetSpans()
+			if tc.skip {
+				require.Empty(t, spans)
+				assert.False(t, active.IsValid())
+				return
+			}
+			require.Len(t, spans, 1)
+			assert.True(t, active.IsValid())
+			assert.Equal(t, active, spans[0].SpanContext)
+			assert.Equal(t, "0123456789abcdef0123456789abcdef", active.TraceID().String())
+			assert.Equal(t, "0123456789abcdef", spans[0].Parent.SpanID().String())
+			assert.True(t, spans[0].Parent.IsRemote())
+			assert.NotEqual(t, spans[0].Parent.SpanID(), active.SpanID())
+			assert.Equal(t, trace.SpanKindServer, spans[0].SpanKind)
+			assert.Contains(t, spans[0].Name, tc.path)
+		})
+	}
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/pashagolub/pgxmock/v4"
-	"github.com/pgvector/pgvector-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -974,6 +973,3 @@ func TestRepository_CreateBatch(t *testing.T) {
 		})
 	}
 }
-
-// Ensure the pgvector import is used (the compiler would catch this, but explicit is better).
-var _ = pgvector.NewVector
