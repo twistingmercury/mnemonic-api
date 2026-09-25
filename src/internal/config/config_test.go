@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,14 +145,9 @@ vocabulary:
 
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	require.NoError(t, err)
+	t.Setenv(config.EnvConfigFile, configPath)
 
-	v := viper.New()
-	config.SetDefaults(v)
-	v.SetConfigFile(configPath)
-	err = v.ReadInConfig()
-	require.NoError(t, err)
-
-	cfg, err := config.LoadFromViper(v)
+	cfg, err := config.LoadWithFlags(nil)
 	require.NoError(t, err)
 
 	// Verify file values override defaults
@@ -215,24 +212,13 @@ vocabulary:
 	err := os.WriteFile(configPath, []byte(configContent), 0644)
 	require.NoError(t, err)
 
-	// Set environment variables to override
+	t.Setenv(config.EnvConfigFile, configPath)
 	t.Setenv("MNEMONIC_SERVER_HOST", "env-host")
 	t.Setenv("MNEMONIC_SERVER_PORT", "8888")
 	t.Setenv("MNEMONIC_DATABASE_POSTGRES_PASSWORD", "envpassword")
 	t.Setenv("MNEMONIC_LOGGING_LEVEL", "error")
 
-	v := viper.New()
-	config.SetDefaults(v)
-	v.SetConfigFile(configPath)
-	err = v.ReadInConfig()
-	require.NoError(t, err)
-
-	// Set up environment binding
-	v.SetEnvPrefix("MNEMONIC")
-	v.SetEnvKeyReplacer(replaceUnderscores())
-	v.AutomaticEnv()
-
-	cfg, err := config.LoadFromViper(v)
+	cfg, err := config.LoadWithFlags(nil)
 	require.NoError(t, err)
 
 	// Verify environment variables override file values
@@ -314,17 +300,10 @@ func TestEnvironmentVariableNaming(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clearMnemonicEnvVars(t)
+			isolateConfigSources(t)
 			t.Setenv(tt.envVar, tt.value)
 
-			v := viper.New()
-			config.SetDefaults(v)
-			applyTestVocabulary(v)
-			v.SetEnvPrefix("MNEMONIC")
-			v.SetEnvKeyReplacer(replaceUnderscores())
-			v.AutomaticEnv()
-
-			cfg, err := config.LoadFromViper(v)
+			cfg, err := config.LoadWithFlags(nil)
 			require.NoError(t, err)
 			tt.check(t, cfg)
 		})
@@ -1273,41 +1252,119 @@ func TestNeo4jCredentials(t *testing.T) {
 	}
 }
 
-// TestConfigFileFlagOverride tests that --config flag takes precedence.
-func TestConfigFileFlagOverride(t *testing.T) {
-	clearMnemonicEnvVars(t)
+// TestLoadWithFlags_ConfigFileSelection pins which single file LoadWithFlags
+// reads. Only one file is ever merged, so a key present only in a losing file
+// must fall back to its default rather than leak through.
+func TestLoadWithFlags_ConfigFileSelection(t *testing.T) {
+	envFileOnly := "server:\n  port: 9001\n  host: env-file-host\n"
+	flagFileOnly := "server:\n  port: 9002\n"
+	discovered := "server:\n  port: 9003\n  host: discovered-host\n"
 
-	// Create multiple config files
-	tmpDir := t.TempDir()
-	envConfigPath := filepath.Join(tmpDir, "env-config.yaml")
-	flagConfigPath := filepath.Join(tmpDir, "flag-config.yaml")
+	tests := []struct {
+		name     string
+		useFlag  bool
+		useEnv   bool
+		wantPort int
+		wantHost string
+	}{
+		{"flag beats env-selected file", true, true, 9002, config.DefaultServerHost},
+		{"flag beats discovered file", true, false, 9002, config.DefaultServerHost},
+		{"env-selected beats discovered file", false, true, 9001, "env-file-host"},
+		{"discovered ./config.yaml when nothing explicit", false, false, 9003, "discovered-host"},
+	}
 
-	envConfig := `
-server:
-  port: 9001
-`
-	flagConfig := `
-server:
-  port: 9002
-`
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := isolateConfigSources(t)
+			writeConfigFile(t, dir, "config.yaml", discovered)
+			envPath := writeConfigFile(t, dir, "env.yaml", envFileOnly)
+			flagPath := writeConfigFile(t, dir, "flag.yaml", flagFileOnly)
 
-	err := os.WriteFile(envConfigPath, []byte(envConfig), 0644)
+			if tt.useEnv {
+				t.Setenv(config.EnvConfigFile, envPath)
+			}
+			flags := configFlagSet(t, "")
+			if tt.useFlag {
+				flags = configFlagSet(t, flagPath)
+			}
+
+			cfg, err := config.LoadWithFlags(flags)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPort, cfg.Server.Port)
+			assert.Equal(t, tt.wantHost, cfg.Server.Host)
+		})
+	}
+}
+
+// TestLoadWithFlags_EnvOverridesFlagSelectedFile proves the file chosen by
+// --config is still below environment variables in precedence.
+func TestLoadWithFlags_EnvOverridesFlagSelectedFile(t *testing.T) {
+	dir := isolateConfigSources(t)
+	path := writeConfigFile(t, dir, "flag.yaml", "server:\n  port: 9002\n  host: file-host\n")
+	t.Setenv("MNEMONIC_SERVER_PORT", "9100")
+
+	cfg, err := config.LoadWithFlags(configFlagSet(t, path))
 	require.NoError(t, err)
-	err = os.WriteFile(flagConfigPath, []byte(flagConfig), 0644)
-	require.NoError(t, err)
+	assert.Equal(t, 9100, cfg.Server.Port)
+	assert.Equal(t, "file-host", cfg.Server.Host)
+}
 
-	// Set environment variable
-	t.Setenv(config.EnvConfigFile, envConfigPath)
+// TestLoadWithFlags_UnreadableExplicitFile verifies an explicitly selected file
+// that cannot be read fails loudly and names the path, rather than silently
+// starting on defaults.
+func TestLoadWithFlags_UnreadableExplicitFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		viaFlag  bool
+		content  *string // nil means the file does not exist
+		notFound bool
+	}{
+		{name: "missing via flag", viaFlag: true, notFound: true},
+		{name: "missing via env", viaFlag: false, notFound: true},
+		{name: "malformed via flag", viaFlag: true, content: ptr("server: [unclosed\n")},
+		{name: "malformed via env", viaFlag: false, content: ptr("server: [unclosed\n")},
+	}
 
-	// Create flagset with --config
-	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	configFlag := flags.String("config", "", "config file")
-	err = flags.Set("config", flagConfigPath)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := isolateConfigSources(t)
+			path := filepath.Join(dir, "explicit.yaml")
+			if tt.content != nil {
+				path = writeConfigFile(t, dir, "explicit.yaml", *tt.content)
+			}
 
-	// Verify flag was marked as changed
-	assert.True(t, flags.Lookup("config").Changed)
-	assert.Equal(t, flagConfigPath, *configFlag)
+			flags := configFlagSet(t, "")
+			if tt.viaFlag {
+				flags = configFlagSet(t, path)
+			} else {
+				t.Setenv(config.EnvConfigFile, path)
+			}
+
+			cfg, err := config.LoadWithFlags(flags)
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), "failed to read config file "+path)
+			assert.Equal(t, tt.notFound, errors.Is(err, fs.ErrNotExist),
+				"a missing file must stay distinguishable from a malformed one")
+		})
+	}
+}
+
+// TestLoadWithFlags_PermissionDenied covers a file that exists but cannot be
+// opened, the case a mis-mounted secret produces.
+func TestLoadWithFlags_PermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+	dir := isolateConfigSources(t)
+	path := writeConfigFile(t, dir, "locked.yaml", "server:\n  port: 9002\n")
+	require.NoError(t, os.Chmod(path, 0o000))
+
+	cfg, err := config.LoadWithFlags(configFlagSet(t, path))
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, fs.ErrPermission)
+	assert.Contains(t, err.Error(), path)
 }
 
 // TestBooleanEnvironmentVariables tests boolean parsing from env vars.
@@ -1327,18 +1384,11 @@ func TestBooleanEnvironmentVariables(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clearMnemonicEnvVars(t)
+			isolateConfigSources(t)
 			// Use logging.include_caller which has no validation dependencies
 			t.Setenv("MNEMONIC_LOGGING_INCLUDE_CALLER", tt.value)
 
-			v := viper.New()
-			config.SetDefaults(v)
-			applyTestVocabulary(v)
-			v.SetEnvPrefix("MNEMONIC")
-			v.SetEnvKeyReplacer(replaceUnderscores())
-			v.AutomaticEnv()
-
-			cfg, err := config.LoadFromViper(v)
+			cfg, err := config.LoadWithFlags(nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, cfg.Logging.IncludeCaller)
 		})
@@ -1360,17 +1410,10 @@ func TestDurationEnvironmentVariables(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clearMnemonicEnvVars(t)
+			isolateConfigSources(t)
 			t.Setenv("MNEMONIC_SERVER_READ_TIMEOUT", tt.value)
 
-			v := viper.New()
-			config.SetDefaults(v)
-			applyTestVocabulary(v)
-			v.SetEnvPrefix("MNEMONIC")
-			v.SetEnvKeyReplacer(replaceUnderscores())
-			v.AutomaticEnv()
-
-			cfg, err := config.LoadFromViper(v)
+			cfg, err := config.LoadWithFlags(nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, cfg.Server.ReadTimeout)
 		})
@@ -1472,18 +1515,41 @@ func clearMnemonicEnvVars(t *testing.T) {
 	}
 }
 
-// strings helper for env key replacement
-func replaceUnderscores() *strings.Replacer {
-	return strings.NewReplacer(".", "_")
+// isolateConfigSources removes every ambient source LoadWithFlags consults:
+// MNEMONIC_* variables and ./config.yaml, by moving into an empty directory.
+// /etc/mnemonic/config.yaml cannot be redirected, so its presence skips the
+// test rather than letting a host file decide the result.
+func isolateConfigSources(t *testing.T) string {
+	t.Helper()
+	if _, err := os.Stat(config.ProductionConfigPath); err == nil {
+		t.Skipf("%s exists and would be discovered", config.ProductionConfigPath)
+	}
+	clearMnemonicEnvVars(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	return dir
 }
 
-// applyTestVocabulary sets minimal valid vocabulary values on a viper instance.
-// Call this in tests that use LoadFromViper without a config file so that
-// vocabulary validation does not cause false failures.
-func applyTestVocabulary(v *viper.Viper) {
-	v.Set("vocabulary.languages", []string{"agnostic", "go"})
-	v.Set("vocabulary.domains", []string{"backend", "testing"})
+func writeConfigFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
 }
+
+// configFlagSet mirrors a --config flag; an empty path leaves it unchanged so
+// LoadWithFlags treats it as absent.
+func configFlagSet(t *testing.T, path string) *pflag.FlagSet {
+	t.Helper()
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("config", "", "config file")
+	if path != "" {
+		require.NoError(t, flags.Set("config", path))
+	}
+	return flags
+}
+
+func ptr[T any](v T) *T { return &v }
 
 // validConfig returns a fully valid configuration for testing.
 func validConfig() *config.MnemonicConfig {
