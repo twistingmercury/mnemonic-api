@@ -41,3 +41,9 @@ type RelatedPattern struct {
 	// ConceptNames contains the names of the shared concepts between the two patterns.
 	ConceptNames []string
 }
+
+// PatternGraph is a pattern's neighbourhood in the knowledge graph.
+type PatternGraph struct {
+	RelatedPatterns []RelatedPattern
+	Concepts        []Concept
+}

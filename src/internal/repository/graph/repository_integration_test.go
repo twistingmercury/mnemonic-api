@@ -661,61 +661,64 @@ func TestIntegration_GetPatternConcepts(t *testing.T) {
 	})
 }
 
-func TestIntegration_CleanupOrphanedConcepts(t *testing.T) {
+func TestIntegration_DeletePatternRemovesItsOrphanedConcepts(t *testing.T) {
 	driver, repo := setupNeo4jDriver(t)
 	cleanupNeo4jTestData(t, driver)
 	t.Cleanup(func() { cleanupNeo4jTestData(t, driver) })
 
 	ctx := context.Background()
 
-	t.Run("removes orphaned concepts after pattern deletion", func(t *testing.T) {
-		// Create a pattern and attach unique concepts.
-		p := testPattern("orphan-source")
-		require.NoError(t, repo.SyncPattern(ctx, p))
+	// p mentions a, b and shared; other mentions shared only.
+	p := testPattern("orphan-source")
+	other := testPattern("orphan-neighbour")
+	require.NoError(t, repo.SyncPattern(ctx, p))
+	require.NoError(t, repo.SyncPattern(ctx, other))
+	require.NoError(t, repo.SyncConcepts(ctx, p.ID, testConcepts("orphan-a", "orphan-b", "orphan-shared")))
+	require.NoError(t, repo.SyncConcepts(ctx, other.ID, testConcepts("orphan-shared")))
 
-		concepts := testConcepts("orphan-a", "orphan-b", "orphan-c")
-		require.NoError(t, repo.SyncConcepts(ctx, p.ID, concepts))
+	// An orphan unrelated to p must survive: delete is scoped to p's concepts.
+	_, err := neo4j.ExecuteQuery(ctx, driver,
+		`CREATE (:Concept {name: $name, type: 'technology'})`,
+		map[string]any{"name": testIntegrationConceptPrefix + "orphan-unrelated"},
+		neo4j.EagerResultTransformer)
+	require.NoError(t, err)
 
-		// Verify concepts exist.
-		count := countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-")
-		require.Equal(t, int64(3), count, "should have 3 orphan-* concepts")
+	require.NoError(t, repo.DeletePattern(ctx, p.ID))
 
-		// Delete the pattern, which removes MENTIONED_IN relationships via DETACH DELETE.
-		require.NoError(t, repo.DeletePattern(ctx, p.ID))
+	assert.Equal(t, int64(0), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-a"))
+	assert.Equal(t, int64(0), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-b"))
+	assert.Equal(t, int64(1), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-shared"),
+		"a concept another pattern still mentions is kept")
+	assert.Equal(t, int64(1), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-unrelated"),
+		"orphans not attached to the deleted pattern are left alone")
 
-		// Concepts should now be orphaned (no MENTIONED_IN relationships).
-		deleted, err := repo.CleanupOrphanedConcepts(ctx)
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, deleted, int64(3), "should have cleaned up at least 3 orphaned concepts")
+	// Deleting a pattern that does not exist is a no-op.
+	require.NoError(t, repo.DeletePattern(ctx, uuid.New()))
+}
 
-		// Verify the orphaned concepts are gone.
-		count = countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-")
-		assert.Equal(t, int64(0), count, "orphaned concepts should be removed")
-	})
+func TestIntegration_GetPatternGraph(t *testing.T) {
+	driver, repo := setupNeo4jDriver(t)
+	cleanupNeo4jTestData(t, driver)
+	t.Cleanup(func() { cleanupNeo4jTestData(t, driver) })
 
-	t.Run("does not remove concepts with active relationships", func(t *testing.T) {
-		// Create a pattern with concepts.
-		p := testPattern("active-concepts")
-		require.NoError(t, repo.SyncPattern(ctx, p))
+	ctx := context.Background()
 
-		concepts := testConcepts("active-x", "active-y")
-		require.NoError(t, repo.SyncConcepts(ctx, p.ID, concepts))
+	pA := testPattern("graph-a")
+	pB := testPattern("graph-b")
+	require.NoError(t, repo.SyncPattern(ctx, pA))
+	require.NoError(t, repo.SyncPattern(ctx, pB))
+	require.NoError(t, repo.SyncConcepts(ctx, pA.ID, testConcepts("g-one", "g-two")))
+	require.NoError(t, repo.SyncConcepts(ctx, pB.ID, testConcepts("g-one")))
+	require.NoError(t, repo.ComputeRelatedToEdges(ctx, pA.ID, 0.0))
 
-		// Run cleanup; active concepts should not be removed.
-		_, err := repo.CleanupOrphanedConcepts(ctx)
-		require.NoError(t, err)
+	got, err := repo.GetPatternGraph(ctx, pA.ID, 10)
+	require.NoError(t, err)
 
-		count := countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"active-")
-		assert.Equal(t, int64(2), count, "active concepts should not be removed")
-	})
-
-	t.Run("returns zero when no orphans exist", func(t *testing.T) {
-		// After previous cleanup, run again. Should find zero new orphans
-		// (assuming no other tests left orphans).
-		deleted, err := repo.CleanupOrphanedConcepts(ctx)
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, deleted, int64(0), "deleted count should be non-negative")
-	})
+	require.Len(t, got.Concepts, 2)
+	assert.Equal(t, testIntegrationConceptPrefix+"g-one", got.Concepts[0].Name)
+	require.Len(t, got.RelatedPatterns, 1)
+	assert.Equal(t, pB.ID, got.RelatedPatterns[0].ID)
+	assert.Equal(t, []string{testIntegrationConceptPrefix + "g-one"}, got.RelatedPatterns[0].ConceptNames)
 }
 
 func TestIntegration_ContextCancellation(t *testing.T) {
@@ -735,14 +738,6 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 		cancel()
 
 		_, err := repo.FindRelatedPatterns(ctx, uuid.New(), 10)
-		assert.Error(t, err)
-	})
-
-	t.Run("CleanupOrphanedConcepts with cancelled context", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err := repo.CleanupOrphanedConcepts(ctx)
 		assert.Error(t, err)
 	})
 

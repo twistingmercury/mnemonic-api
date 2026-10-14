@@ -41,7 +41,8 @@ type Repository interface {
 	// SyncPattern creates or updates a Pattern node in the graph.
 	SyncPattern(ctx context.Context, pattern *Pattern) error
 
-	// DeletePattern removes a Pattern node and all its relationships from the graph.
+	// DeletePattern removes a Pattern node and all its relationships from the
+	// graph, along with any of its concepts that no other pattern mentions.
 	DeletePattern(ctx context.Context, patternID uuid.UUID) error
 
 	// SyncConcepts replaces all MENTIONED_IN relationships for a pattern with the provided concepts.
@@ -60,8 +61,9 @@ type Repository interface {
 	// Results include similarity scores and shared concept names.
 	FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPattern, error)
 
-	// CleanupOrphanedConcepts removes concept nodes with no MENTIONED_IN relationships.
-	CleanupOrphanedConcepts(ctx context.Context) (int64, error)
+	// GetPatternGraph returns up to relatedLimit related patterns and all
+	// concepts for a pattern, using a single session and read transaction.
+	GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (*PatternGraph, error)
 
 	// HealthCheck verifies connectivity to the Neo4j database.
 	HealthCheck(ctx context.Context) error
@@ -183,7 +185,8 @@ func (r *neo4jRepository) SyncPattern(ctx context.Context, pattern *Pattern) (er
 	return nil
 }
 
-// DeletePattern removes a Pattern node and all its relationships from the graph.
+// DeletePattern removes a Pattern node and all its relationships from the
+// graph, along with any of its concepts that no other pattern mentions.
 func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID) (err error) {
 	if patternID == uuid.Nil {
 		return errors.New("patternID must not be nil UUID")
@@ -198,7 +201,17 @@ func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID
 
 	_, err = session.ExecuteWrite(ctx, func(runner CypherRunner) (any, error) {
 		_, err := runner.Run(ctx,
-			"MATCH (p:Pattern {id: $patternId}) DETACH DELETE p",
+			// Collect the pattern's concepts before detaching it, then drop
+			// only those that no other pattern mentions. This replaces a
+			// graph-wide orphan sweep with work proportional to one pattern.
+			`MATCH (p:Pattern {id: $patternId})
+			 OPTIONAL MATCH (c:Concept)-[:MENTIONED_IN]->(p)
+			 WITH p, collect(c) AS concepts
+			 DETACH DELETE p
+			 WITH concepts
+			 UNWIND concepts AS c
+			 WITH c WHERE NOT (c)-[:MENTIONED_IN]->()
+			 DELETE c`,
 			map[string]any{"patternId": patternID.String()},
 		)
 		return nil, err
@@ -359,48 +372,7 @@ func (r *neo4jRepository) GetPatternConcepts(ctx context.Context, patternID uuid
 	}()
 
 	result, err := session.ExecuteRead(ctx, func(runner CypherRunner) (any, error) {
-		res, err := runner.Run(ctx,
-			`MATCH (c:Concept)-[:MENTIONED_IN]->(p:Pattern {id: $patternId})
-			 RETURN c.name AS name, c.type AS type
-			 ORDER BY c.name`,
-			map[string]any{"patternId": patternID.String()},
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		records, err := res.Collect(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		concepts := make([]Concept, 0, len(records))
-		for _, record := range records {
-			nameVal, ok := record.Get("name")
-			if !ok {
-				return nil, fmt.Errorf("missing 'name' field in record")
-			}
-			nameStr, ok := nameVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'name': %T", nameVal)
-			}
-
-			typeVal, ok := record.Get("type")
-			if !ok {
-				return nil, fmt.Errorf("missing 'type' field in record")
-			}
-			typeStr, ok := typeVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'type': %T", typeVal)
-			}
-
-			concepts = append(concepts, Concept{
-				Name: nameStr,
-				Type: typeStr,
-			})
-		}
-
-		return concepts, nil
+		return readConcepts(ctx, runner, patternID)
 	})
 
 	if err != nil {
@@ -425,98 +397,7 @@ func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uui
 	}()
 
 	result, err := session.ExecuteRead(ctx, func(runner CypherRunner) (any, error) {
-		res, err := runner.Run(ctx,
-			`MATCH (p1:Pattern {id: $patternId})-[r:RELATED_TO]-(p2:Pattern)
-			 WITH p1, p2, r.similarity AS similarity
-			 OPTIONAL MATCH (p1)<-[:MENTIONED_IN]-(c:Concept)-[:MENTIONED_IN]->(p2)
-			 WITH p2, similarity, collect(c.name) AS conceptNames, count(c) AS sharedConcepts
-			 ORDER BY similarity DESC
-			 LIMIT $limit
-			 RETURN p2.id AS id, p2.name AS name, sharedConcepts, similarity, conceptNames`,
-			map[string]any{
-				"patternId": patternID.String(),
-				"limit":     limit,
-			},
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		records, err := res.Collect(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		patterns := make([]RelatedPattern, 0, len(records))
-		for _, record := range records {
-			idVal, ok := record.Get("id")
-			if !ok {
-				return nil, fmt.Errorf("missing 'id' field in record")
-			}
-			idStr, ok := idVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'id': %T", idVal)
-			}
-
-			nameVal, ok := record.Get("name")
-			if !ok {
-				return nil, fmt.Errorf("missing 'name' field in record")
-			}
-			nameStr, ok := nameVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'name': %T", nameVal)
-			}
-
-			sharedVal, ok := record.Get("sharedConcepts")
-			if !ok {
-				return nil, fmt.Errorf("missing 'sharedConcepts' field in record")
-			}
-			sharedInt, ok := sharedVal.(int64)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'sharedConcepts': %T", sharedVal)
-			}
-
-			similarityVal, ok := record.Get("similarity")
-			if !ok {
-				return nil, fmt.Errorf("missing 'similarity' field in record")
-			}
-			similarityFloat, ok := similarityVal.(float64)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'similarity': %T", similarityVal)
-			}
-
-			conceptNamesVal, ok := record.Get("conceptNames")
-			if !ok {
-				return nil, fmt.Errorf("missing 'conceptNames' field in record")
-			}
-			conceptNamesRaw, ok := conceptNamesVal.([]any)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'conceptNames': %T", conceptNamesVal)
-			}
-			conceptNames := make([]string, 0, len(conceptNamesRaw))
-			for _, v := range conceptNamesRaw {
-				s, ok := v.(string)
-				if !ok {
-					return nil, fmt.Errorf("unexpected type for concept name element: %T", v)
-				}
-				conceptNames = append(conceptNames, s)
-			}
-
-			parsedID, err := uuid.Parse(idStr)
-			if err != nil {
-				return nil, fmt.Errorf("parsing pattern ID %q: %w", idStr, err)
-			}
-
-			patterns = append(patterns, RelatedPattern{
-				ID:             parsedID,
-				Name:           nameStr,
-				SharedConcepts: int(sharedInt),
-				Similarity:     similarityFloat,
-				ConceptNames:   conceptNames,
-			})
-		}
-
-		return patterns, nil
+		return readRelated(ctx, runner, patternID, limit)
 	})
 
 	if err != nil {
@@ -526,8 +407,13 @@ func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uui
 	return result.([]RelatedPattern), nil
 }
 
-// CleanupOrphanedConcepts removes concept nodes with no MENTIONED_IN relationships.
-func (r *neo4jRepository) CleanupOrphanedConcepts(ctx context.Context) (_ int64, err error) {
+// GetPatternGraph returns a pattern's related patterns and concepts from one
+// session and one read transaction, instead of a session per query.
+func (r *neo4jRepository) GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (_ *PatternGraph, err error) {
+	if patternID == uuid.Nil {
+		return nil, errors.New("patternID must not be nil UUID")
+	}
+
 	session := r.factory(ctx)
 	defer func() {
 		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
@@ -535,42 +421,168 @@ func (r *neo4jRepository) CleanupOrphanedConcepts(ctx context.Context) (_ int64,
 		}
 	}()
 
-	result, err := session.ExecuteWrite(ctx, func(runner CypherRunner) (any, error) {
-		res, err := runner.Run(ctx,
-			`MATCH (c:Concept)
-			 WHERE NOT (c)-[:MENTIONED_IN]->()
-			 DELETE c
-			 RETURN count(c) AS deletedCount`,
-			nil,
-		)
+	result, err := session.ExecuteRead(ctx, func(runner CypherRunner) (any, error) {
+		related, err := readRelated(ctx, runner, patternID, relatedLimit)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("related patterns: %w", err)
 		}
-
-		record, err := res.Single(ctx)
+		concepts, err := readConcepts(ctx, runner, patternID)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("concepts: %w", err)
 		}
-
-		deletedVal, ok := record.Get("deletedCount")
-		if !ok {
-			return nil, fmt.Errorf("missing 'deletedCount' field in record")
-		}
-		deletedCount, ok := deletedVal.(int64)
-		if !ok {
-			return nil, fmt.Errorf("unexpected type for 'deletedCount': %T", deletedVal)
-		}
-		return deletedCount, nil
+		return &PatternGraph{RelatedPatterns: related, Concepts: concepts}, nil
 	})
 
 	if err != nil {
-		return 0, fmt.Errorf("cleaning up orphaned concepts: %w", err)
+		return nil, fmt.Errorf("getting graph for pattern %s: %w", patternID, err)
 	}
 
-	return result.(int64), nil
+	return result.(*PatternGraph), nil
 }
 
 // HealthCheck verifies connectivity to the Neo4j database.
 func (r *neo4jRepository) HealthCheck(ctx context.Context) error {
 	return r.healthCheckFn(ctx)
+}
+
+// readConcepts runs the concepts-for-pattern query on runner.
+func readConcepts(ctx context.Context, runner CypherRunner, patternID uuid.UUID) ([]Concept, error) {
+	res, err := runner.Run(ctx,
+		`MATCH (c:Concept)-[:MENTIONED_IN]->(p:Pattern {id: $patternId})
+		 RETURN c.name AS name, c.type AS type
+		 ORDER BY c.name`,
+		map[string]any{"patternId": patternID.String()},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	records, err := res.Collect(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	concepts := make([]Concept, 0, len(records))
+	for _, record := range records {
+		nameVal, ok := record.Get("name")
+		if !ok {
+			return nil, fmt.Errorf("missing 'name' field in record")
+		}
+		nameStr, ok := nameVal.(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for 'name': %T", nameVal)
+		}
+
+		typeVal, ok := record.Get("type")
+		if !ok {
+			return nil, fmt.Errorf("missing 'type' field in record")
+		}
+		typeStr, ok := typeVal.(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for 'type': %T", typeVal)
+		}
+
+		concepts = append(concepts, Concept{
+			Name: nameStr,
+			Type: typeStr,
+		})
+	}
+
+	return concepts, nil
+}
+
+// readRelated runs the related-patterns query on runner.
+func readRelated(ctx context.Context, runner CypherRunner, patternID uuid.UUID, limit int) ([]RelatedPattern, error) {
+	res, err := runner.Run(ctx,
+		`MATCH (p1:Pattern {id: $patternId})-[r:RELATED_TO]-(p2:Pattern)
+		 WITH p1, p2, r.similarity AS similarity
+		 OPTIONAL MATCH (p1)<-[:MENTIONED_IN]-(c:Concept)-[:MENTIONED_IN]->(p2)
+		 WITH p2, similarity, collect(c.name) AS conceptNames, count(c) AS sharedConcepts
+		 ORDER BY similarity DESC
+		 LIMIT $limit
+		 RETURN p2.id AS id, p2.name AS name, sharedConcepts, similarity, conceptNames`,
+		map[string]any{
+			"patternId": patternID.String(),
+			"limit":     limit,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	records, err := res.Collect(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	patterns := make([]RelatedPattern, 0, len(records))
+	for _, record := range records {
+		idVal, ok := record.Get("id")
+		if !ok {
+			return nil, fmt.Errorf("missing 'id' field in record")
+		}
+		idStr, ok := idVal.(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for 'id': %T", idVal)
+		}
+
+		nameVal, ok := record.Get("name")
+		if !ok {
+			return nil, fmt.Errorf("missing 'name' field in record")
+		}
+		nameStr, ok := nameVal.(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for 'name': %T", nameVal)
+		}
+
+		sharedVal, ok := record.Get("sharedConcepts")
+		if !ok {
+			return nil, fmt.Errorf("missing 'sharedConcepts' field in record")
+		}
+		sharedInt, ok := sharedVal.(int64)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for 'sharedConcepts': %T", sharedVal)
+		}
+
+		similarityVal, ok := record.Get("similarity")
+		if !ok {
+			return nil, fmt.Errorf("missing 'similarity' field in record")
+		}
+		similarityFloat, ok := similarityVal.(float64)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for 'similarity': %T", similarityVal)
+		}
+
+		conceptNamesVal, ok := record.Get("conceptNames")
+		if !ok {
+			return nil, fmt.Errorf("missing 'conceptNames' field in record")
+		}
+		conceptNamesRaw, ok := conceptNamesVal.([]any)
+		if !ok {
+			return nil, fmt.Errorf("unexpected type for 'conceptNames': %T", conceptNamesVal)
+		}
+		conceptNames := make([]string, 0, len(conceptNamesRaw))
+		for _, v := range conceptNamesRaw {
+			s, ok := v.(string)
+			if !ok {
+				return nil, fmt.Errorf("unexpected type for concept name element: %T", v)
+			}
+			conceptNames = append(conceptNames, s)
+		}
+
+		parsedID, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("parsing pattern ID %q: %w", idStr, err)
+		}
+
+		patterns = append(patterns, RelatedPattern{
+			ID:             parsedID,
+			Name:           nameStr,
+			SharedConcepts: int(sharedInt),
+			Similarity:     similarityFloat,
+			ConceptNames:   conceptNames,
+		})
+	}
+
+	return patterns, nil
 }

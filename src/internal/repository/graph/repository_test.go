@@ -3,6 +3,7 @@ package graph_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -324,6 +325,8 @@ func TestRepository_DeletePattern_CypherParams(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, capturedRunner.calls, 1)
 	assert.Contains(t, capturedRunner.calls[0].cypher, "DETACH DELETE")
+	// Orphan cleanup is scoped to this pattern's own concepts, not every :Concept.
+	assert.Contains(t, capturedRunner.calls[0].cypher, "UNWIND concepts AS c")
 	assert.Equal(t, patternID.String(), capturedRunner.calls[0].params["patternId"])
 }
 
@@ -1000,150 +1003,83 @@ func TestRepository_FindRelatedPatterns_CollectError(t *testing.T) {
 	assert.Contains(t, err.Error(), "collect failed")
 }
 
-// --- CleanupOrphanedConcepts tests ---
+// --- GetPatternGraph tests ---
 
-func TestRepository_CleanupOrphanedConcepts(t *testing.T) {
+func TestRepository_GetPatternGraph_OneSessionBothQueries(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name      string
-		setupMock func() *mockSessionExecutor
-		want      int64
-		wantErr   bool
-		errMsg    string
-	}{
-		{
-			name: "successful cleanup deletes orphaned concepts",
-			setupMock: func() *mockSessionExecutor {
-				return &mockSessionExecutor{
-					executeWriteFn: func(ctx context.Context, work func(runner graph.CypherRunner) (any, error)) (any, error) {
-						runner := &mockCypherRunner{
-							runFn: func(_ context.Context, _ string, _ map[string]any) (graph.ResultCollector, error) {
-								return &mockResultCollector{
-									records: []*db.Record{
-										makeRecord(
-											[]string{"deletedCount"},
-											[]any{int64(7)},
-										),
-									},
-								}, nil
-							},
-						}
-						return work(runner)
-					},
-				}
-			},
-			want:    7,
-			wantErr: false,
-		},
-		{
-			name: "no orphans returns zero",
-			setupMock: func() *mockSessionExecutor {
-				return &mockSessionExecutor{
-					executeWriteFn: func(ctx context.Context, work func(runner graph.CypherRunner) (any, error)) (any, error) {
-						runner := &mockCypherRunner{
-							runFn: func(_ context.Context, _ string, _ map[string]any) (graph.ResultCollector, error) {
-								return &mockResultCollector{
-									records: []*db.Record{
-										makeRecord(
-											[]string{"deletedCount"},
-											[]any{int64(0)},
-										),
-									},
-								}, nil
-							},
-						}
-						return work(runner)
-					},
-				}
-			},
-			want:    0,
-			wantErr: false,
-		},
-		{
-			name: "database error wraps with context",
-			setupMock: func() *mockSessionExecutor {
-				return &mockSessionExecutor{
-					executeWriteFn: func(_ context.Context, _ func(runner graph.CypherRunner) (any, error)) (any, error) {
-						return nil, errors.New("database unavailable")
-					},
-				}
-			},
-			want:    0,
-			wantErr: true,
-			errMsg:  "cleaning up orphaned concepts",
-		},
-		{
-			name: "single record error propagates",
-			setupMock: func() *mockSessionExecutor {
-				return &mockSessionExecutor{
-					executeWriteFn: func(ctx context.Context, work func(runner graph.CypherRunner) (any, error)) (any, error) {
-						runner := &mockCypherRunner{
-							runFn: func(_ context.Context, _ string, _ map[string]any) (graph.ResultCollector, error) {
-								return &mockResultCollector{
-									records:   []*db.Record{},
-									singleErr: errors.New("no records"),
-								}, nil
-							},
-						}
-						return work(runner)
-					},
-				}
-			},
-			want:    0,
-			wantErr: true,
-			errMsg:  "no records",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			session := tt.setupMock()
-			repo := newTestRepo(session)
-
-			count, err := repo.CleanupOrphanedConcepts(context.Background())
-
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.want, count)
-			}
-		})
-	}
-}
-
-func TestRepository_CleanupOrphanedConcepts_CypherQuery(t *testing.T) {
-	t.Parallel()
-
-	var capturedRunner *mockCypherRunner
+	patternID := uuid.New()
+	relatedID := uuid.New()
+	var runner *mockCypherRunner
+	sessions, reads := 0, 0
 
 	session := &mockSessionExecutor{
-		executeWriteFn: func(ctx context.Context, work func(runner graph.CypherRunner) (any, error)) (any, error) {
-			capturedRunner = &mockCypherRunner{
-				runFn: func(_ context.Context, _ string, _ map[string]any) (graph.ResultCollector, error) {
-					return &mockResultCollector{
-						records: []*db.Record{
-							makeRecord([]string{"deletedCount"}, []any{int64(0)}),
-						},
-					}, nil
+		executeReadFn: func(_ context.Context, work func(runner graph.CypherRunner) (any, error)) (any, error) {
+			reads++
+			runner = &mockCypherRunner{
+				runFn: func(_ context.Context, cypher string, _ map[string]any) (graph.ResultCollector, error) {
+					if strings.Contains(cypher, "RELATED_TO") {
+						return &mockResultCollector{records: []*db.Record{
+							makeRecord(
+								[]string{"id", "name", "sharedConcepts", "similarity", "conceptNames"},
+								[]any{relatedID.String(), "other", int64(1), 0.8, []any{"go"}},
+							),
+						}}, nil
+					}
+					return &mockResultCollector{records: []*db.Record{
+						makeRecord([]string{"name", "type"}, []any{"go", "technology"}),
+					}}, nil
 				},
 			}
-			return work(capturedRunner)
+			return work(runner)
 		},
 	}
+	repo := graph.ExportNewRepositoryWithFactory(func(_ context.Context) graph.SessionExecutor {
+		sessions++
+		return session
+	}, nil)
 
-	repo := newTestRepo(session)
-	_, err := repo.CleanupOrphanedConcepts(context.Background())
+	got, err := repo.GetPatternGraph(context.Background(), patternID, 5)
 
 	require.NoError(t, err)
-	require.Len(t, capturedRunner.calls, 1)
-	assert.Contains(t, capturedRunner.calls[0].cypher, "MATCH (c:Concept)")
-	assert.Contains(t, capturedRunner.calls[0].cypher, "WHERE NOT (c)-[:MENTIONED_IN]->()")
-	assert.Contains(t, capturedRunner.calls[0].cypher, "DELETE c")
+	assert.Equal(t, 1, sessions, "one session for both queries")
+	assert.Equal(t, 1, reads, "one read transaction for both queries")
+	require.Len(t, runner.calls, 2)
+	assert.Equal(t, 5, runner.calls[0].params["limit"])
+	require.Len(t, got.RelatedPatterns, 1)
+	assert.Equal(t, relatedID, got.RelatedPatterns[0].ID)
+	assert.Equal(t, []string{"go"}, got.RelatedPatterns[0].ConceptNames)
+	assert.Equal(t, []graph.Concept{{Name: "go", Type: "technology"}}, got.Concepts)
+}
+
+func TestRepository_GetPatternGraph_Errors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil UUID", func(t *testing.T) {
+		t.Parallel()
+		_, err := newTestRepo(&mockSessionExecutor{}).GetPatternGraph(context.Background(), uuid.Nil, 10)
+		require.Error(t, err)
+	})
+
+	t.Run("concepts query fails", func(t *testing.T) {
+		t.Parallel()
+		session := &mockSessionExecutor{
+			executeReadFn: func(_ context.Context, work func(runner graph.CypherRunner) (any, error)) (any, error) {
+				return work(&mockCypherRunner{
+					runFn: func(_ context.Context, cypher string, _ map[string]any) (graph.ResultCollector, error) {
+						if strings.Contains(cypher, "RELATED_TO") {
+							return &mockResultCollector{}, nil
+						}
+						return nil, errors.New("neo4j down")
+					},
+				})
+			},
+		}
+		_, err := newTestRepo(session).GetPatternGraph(context.Background(), uuid.New(), 10)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "concepts")
+		assert.Contains(t, err.Error(), "neo4j down")
+	})
 }
 
 // --- Context cancellation tests ---

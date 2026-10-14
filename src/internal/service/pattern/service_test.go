@@ -121,6 +121,14 @@ func (m *mockEnrichmentRepo) Create(ctx context.Context, job *enrichmentrepo.Job
 	return args.Error(0)
 }
 
+func (m *mockEnrichmentRepo) CreatePendingForChunks(ctx context.Context, chunkIDs []uuid.UUID) ([]uuid.UUID, error) {
+	args := m.Called(ctx, chunkIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uuid.UUID), args.Error(1)
+}
+
 func (m *mockEnrichmentRepo) Get(ctx context.Context, id uuid.UUID) (*enrichmentrepo.Job, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
@@ -237,9 +245,12 @@ func (m *mockGraphRepo) FindRelatedPatterns(ctx context.Context, patternID uuid.
 	return args.Get(0).([]graphrepo.RelatedPattern), args.Error(1)
 }
 
-func (m *mockGraphRepo) CleanupOrphanedConcepts(ctx context.Context) (int64, error) {
-	args := m.Called(ctx)
-	return args.Get(0).(int64), args.Error(1)
+func (m *mockGraphRepo) GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (*graphrepo.PatternGraph, error) {
+	args := m.Called(ctx, patternID, relatedLimit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*graphrepo.PatternGraph), args.Error(1)
 }
 
 func (m *mockGraphRepo) HealthCheck(ctx context.Context) error {
@@ -352,7 +363,7 @@ func (m *mockChunkRepo) Get(ctx context.Context, id uuid.UUID) (*chunkrepo.Chunk
 	return args.Get(0).(*chunkrepo.Chunk), args.Error(1)
 }
 
-func (m *mockChunkRepo) ListByPatternID(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
+func (m *mockChunkRepo) ListSummariesByPatternID(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
 	args := m.Called(ctx, patternID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -593,8 +604,8 @@ func TestCreate(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, service.ErrConflict), "expected service.ErrConflict, got: %v", err)
 
-		er.AssertNotCalled(t, "Create")
-		er.tx().AssertNotCalled(t, "Create")
+		er.AssertNotCalled(t, "CreatePendingForChunks")
+		er.tx().AssertNotCalled(t, "CreatePendingForChunks")
 		tb.AssertExpectations(t)
 	})
 
@@ -681,19 +692,20 @@ func TestGetWithGraph(t *testing.T) {
 
 		pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
 
-		gr.On("FindRelatedPatterns", mock.Anything, testPatternID, 10).Return([]graphrepo.RelatedPattern{
-			{
-				ID:             testRelatedID,
-				Name:           "go-concurrency",
-				SharedConcepts: 2,
-				Similarity:     0.75,
-				ConceptNames:   []string{"goroutines", "channels"},
+		gr.On("GetPatternGraph", mock.Anything, testPatternID, 10).Return(&graphrepo.PatternGraph{
+			RelatedPatterns: []graphrepo.RelatedPattern{
+				{
+					ID:             testRelatedID,
+					Name:           "go-concurrency",
+					SharedConcepts: 2,
+					Similarity:     0.75,
+					ConceptNames:   []string{"goroutines", "channels"},
+				},
 			},
-		}, nil)
-
-		gr.On("GetPatternConcepts", mock.Anything, testPatternID).Return([]graphrepo.Concept{
-			{Name: "error-handling", Type: "practice"},
-			{Name: "golang", Type: "technology"},
+			Concepts: []graphrepo.Concept{
+				{Name: "error-handling", Type: "practice"},
+				{Name: "golang", Type: "technology"},
+			},
 		}, nil)
 
 		pattern, graphCtx, err := svc.GetWithGraph(context.Background(), testPatternID)
@@ -734,8 +746,7 @@ func TestGetWithGraph(t *testing.T) {
 		require.NotNil(t, pattern)
 		assert.Nil(t, graphCtx)
 
-		gr.AssertNotCalled(t, "FindRelatedPatterns")
-		gr.AssertNotCalled(t, "GetPatternConcepts")
+		gr.AssertNotCalled(t, "GetPatternGraph")
 	})
 
 	t.Run("neo4j failure returns nil graph context", func(t *testing.T) {
@@ -748,7 +759,7 @@ func TestGetWithGraph(t *testing.T) {
 		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
-		gr.On("FindRelatedPatterns", mock.Anything, testPatternID, 10).
+		gr.On("GetPatternGraph", mock.Anything, testPatternID, 10).
 			Return(nil, errors.New("neo4j connection refused"))
 
 		pattern, graphCtx, err := svc.GetWithGraph(context.Background(), testPatternID)
@@ -794,7 +805,7 @@ func TestUpdate(t *testing.T) {
 		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
 
 		// No CreateBatch call (0 chunks).
-		// No er.tx().On("Create") call (0 chunks → no per-chunk jobs).
+		// No er.tx().On("CreatePendingForChunks") call (0 chunks → no jobs).
 
 		result, err := svc.Update(context.Background(), testPatternID, input)
 
@@ -870,11 +881,10 @@ func TestUpdate(t *testing.T) {
 			return len(chunks) == 2
 		})).Return(nil)
 
-		// Per-chunk enrichment jobs: expect 2 calls, each with a ChunkID set.
-		er.tx().On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
-			// Status is left unset; enrichmentjob.Create defaults it to pending.
-			return j.ChunkID != nil && j.PatternID == nil
-		})).Return(nil).Times(2)
+		// One batched insert creates a job for each of the 2 chunks.
+		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
+			return len(ids) == 2
+		})).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil).Once()
 
 		result, err := svc.Update(context.Background(), testPatternID, input)
 
@@ -925,7 +935,7 @@ func TestUpdate(t *testing.T) {
 		tx.AssertExpectations(t)
 		tx.AssertNotCalled(t, "Commit")
 		cr.AssertNotCalled(t, "CreateBatch")
-		er.AssertNotCalled(t, "Create")
+		er.AssertNotCalled(t, "CreatePendingForChunks")
 	})
 
 	t.Run("transaction commit path: all steps succeed, Commit called, Rollback is deferred no-op", func(t *testing.T) {
@@ -958,10 +968,9 @@ func TestUpdate(t *testing.T) {
 			return len(chunks) == 2
 		})).Return(nil)
 
-		er.tx().On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
-			// Status is left unset; enrichmentjob.Create defaults it to pending.
-			return j.ChunkID != nil && j.PatternID == nil
-		})).Return(nil).Times(2)
+		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
+			return len(ids) == 2
+		})).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil).Once()
 
 		result, err := svc.Update(context.Background(), testPatternID, input)
 
@@ -978,7 +987,7 @@ func TestUpdate(t *testing.T) {
 		pr.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
 		cr.AssertNotCalled(t, "CreateBatch", mock.Anything, mock.Anything)
 		cr.AssertNotCalled(t, "DeleteByPatternID", mock.Anything, mock.Anything)
-		er.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+		er.AssertNotCalled(t, "CreatePendingForChunks", mock.Anything, mock.Anything)
 
 		tb.AssertExpectations(t)
 		tx.AssertExpectations(t)
@@ -1090,12 +1099,8 @@ func TestUpdate(t *testing.T) {
 			return len(chunks) == 2
 		})).Return(nil)
 
-		er.tx().On("Create", mock.Anything, mock.MatchedBy(func(j *enrichmentrepo.Job) bool {
-			return j.ChunkID != nil
-		})).Run(func(args mock.Arguments) {
-			j := args.Get(1).(*enrichmentrepo.Job)
-			j.ID = uuid.New()
-		}).Return(nil).Times(2)
+		er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).
+			Return([]uuid.UUID{uuid.New(), uuid.New()}, nil).Once()
 
 		result, err := svc.Update(context.Background(), testPatternID, input)
 
@@ -1130,7 +1135,7 @@ func TestCreate_JobFailureRollsBackEverything(t *testing.T) {
 		args.Get(1).(*patternrepo.Pattern).ID = testPatternID
 	}).Return(nil)
 	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
-	er.tx().On("Create", mock.Anything, mock.Anything).Return(errors.New("jobs table unavailable"))
+	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
 
 	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
 		Name:    "go-error-handling",
@@ -1166,7 +1171,7 @@ func TestUpdate_JobFailureRollsBackEverything(t *testing.T) {
 	pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
 	cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
 	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
-	er.tx().On("Create", mock.Anything, mock.Anything).Return(errors.New("jobs table unavailable"))
+	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
 
 	result, err := svc.Update(context.Background(), testPatternID, patternsvc.UpdateInput{
 		Name:    "go-error-handling-v2",
@@ -1209,9 +1214,7 @@ func TestCreate_CommitFailurePublishesNothing(t *testing.T) {
 			_ = i
 		}
 	}).Return(nil)
-	er.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		args.Get(1).(*enrichmentrepo.Job).ID = uuid.New()
-	}).Return(nil)
+	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil)
 
 	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
 		Name:    "go-error-handling",
@@ -1228,7 +1231,7 @@ func TestCreate_CommitFailurePublishesNothing(t *testing.T) {
 func TestDelete(t *testing.T) {
 	t.Parallel()
 
-	t.Run("happy path with neo4j cleanup", func(t *testing.T) {
+	t.Run("happy path deletes from neo4j once, with no graph-wide sweep", func(t *testing.T) {
 		t.Parallel()
 
 		pr := new(mockPatternRepo)
@@ -1238,8 +1241,7 @@ func TestDelete(t *testing.T) {
 		svc := newTestService(pr, er, gr, tb)
 
 		pr.On("Delete", mock.Anything, testPatternID).Return(nil)
-		gr.On("DeletePattern", mock.Anything, testPatternID).Return(nil)
-		gr.On("CleanupOrphanedConcepts", mock.Anything).Return(int64(2), nil)
+		gr.On("DeletePattern", mock.Anything, testPatternID).Return(nil).Once()
 
 		err := svc.Delete(context.Background(), testPatternID)
 
@@ -1266,7 +1268,6 @@ func TestDelete(t *testing.T) {
 		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
 
 		gr.AssertNotCalled(t, "DeletePattern")
-		gr.AssertNotCalled(t, "CleanupOrphanedConcepts")
 	})
 }
 
@@ -1428,14 +1429,11 @@ func TestCreate_ChunksContent(t *testing.T) {
 		}
 	}).Return(nil)
 
-	var jobSeq int
-	er.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		job := args.Get(1).(*enrichmentrepo.Job)
-		require.NotNil(t, job.ChunkID, "every job must name its chunk")
-		job.ID = jobIDs[jobSeq]
-		jobForChunk[*job.ChunkID] = job.ID
-		jobSeq++
-	}).Return(nil).Times(2)
+	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		for i, chunkID := range args.Get(1).([]uuid.UUID) {
+			jobForChunk[chunkID] = jobIDs[i]
+		}
+	}).Return(jobIDs, nil).Once()
 
 	result, err := svc.Create(context.Background(), input)
 
@@ -1470,7 +1468,7 @@ func TestCreate_ChunksContent(t *testing.T) {
 func TestListChunks(t *testing.T) {
 	t.Parallel()
 
-	t.Run("happy path returns chunks for existing pattern", func(t *testing.T) {
+	t.Run("happy path returns chunk summaries without re-reading the pattern", func(t *testing.T) {
 		t.Parallel()
 
 		pr := new(mockPatternRepo)
@@ -1484,8 +1482,7 @@ func TestListChunks(t *testing.T) {
 			{ChunkIndex: 0, SectionTitle: "Overview", EnrichmentStatus: "pending"},
 			{ChunkIndex: 1, SectionTitle: "Philosophy", EnrichmentStatus: "enriched"},
 		}
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		cr.On("ListByPatternID", mock.Anything, testPatternID).Return(expectedChunks, nil)
+		cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return(expectedChunks, nil)
 
 		result, err := svc.ListChunks(context.Background(), testPatternID)
 
@@ -1497,29 +1494,8 @@ func TestListChunks(t *testing.T) {
 		assert.Equal(t, 1, result[1].ChunkIndex)
 		assert.Equal(t, "Philosophy", result[1].SectionTitle)
 
-		pr.AssertExpectations(t)
+		pr.AssertNotCalled(t, "Get")
 		cr.AssertExpectations(t)
-	})
-
-	t.Run("pattern not found returns service.ErrNotFound", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
-
-		pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
-
-		result, err := svc.ListChunks(context.Background(), testPatternID)
-
-		assert.Nil(t, result)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
-
-		cr.AssertNotCalled(t, "ListByPatternID")
 	})
 
 	t.Run("returns empty slice when pattern has no chunks", func(t *testing.T) {
@@ -1532,15 +1508,14 @@ func TestListChunks(t *testing.T) {
 		cr := new(mockChunkRepo)
 		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		cr.On("ListByPatternID", mock.Anything, testPatternID).Return([]*chunkrepo.Chunk{}, nil)
+		cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return([]*chunkrepo.Chunk{}, nil)
 
 		result, err := svc.ListChunks(context.Background(), testPatternID)
 
 		require.NoError(t, err)
 		assert.Empty(t, result)
 
-		pr.AssertExpectations(t)
+		pr.AssertNotCalled(t, "Get")
 		cr.AssertExpectations(t)
 	})
 
@@ -1554,8 +1529,7 @@ func TestListChunks(t *testing.T) {
 		cr := new(mockChunkRepo)
 		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		cr.On("ListByPatternID", mock.Anything, testPatternID).Return(nil, errors.New("db error"))
+		cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return(nil, errors.New("db error"))
 
 		result, err := svc.ListChunks(context.Background(), testPatternID)
 
@@ -1563,7 +1537,7 @@ func TestListChunks(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "db error")
 
-		pr.AssertExpectations(t)
+		pr.AssertNotCalled(t, "Get")
 		cr.AssertExpectations(t)
 	})
 }
@@ -1617,11 +1591,7 @@ func TestPublishJobError(t *testing.T) {
 			_ = i
 		}
 	}).Return(nil)
-	var seq int
-	er.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		args.Get(1).(*enrichmentrepo.Job).ID = jobIDs[seq]
-		seq++
-	}).Return(nil).Times(2)
+	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(jobIDs, nil).Once()
 
 	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
 		Name:    "chunked-pattern",

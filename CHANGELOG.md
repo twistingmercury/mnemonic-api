@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error response `traceId` now identifies the active OpenTelemetry trace rather than the incoming `X-Request-ID`, and is omitted when no valid trace context exists. Request identity and trace identity are now separate values.
 - Request-completion logging moved from the `otelx` Gin middleware to an in-repository implementation that carries the failure cause.
 - `database.postgres.max_open_conns` and `max_idle_conns` are typed `int32`, matching the pool settings they configure. A value too large is now rejected while loading, naming the key, instead of being silently clamped.
+- Creating or updating a pattern inserts all of its chunks in one statement and all of its enrichment jobs in another, so the write costs two round trips however many sections the pattern has. Previously each chunk and each job was its own round trip.
+- `GET /v1/api/patterns/:id` reads the pattern row once and fetches related patterns and concepts in one Neo4j session, and the chunk list it embeds no longer loads chunk content. Previously the pattern was read twice, Neo4j was opened twice, and every chunk body was read and discarded.
+- `GET /v1/api/patterns` no longer reads pattern content, which the list response never returned.
+- Deleting a pattern removes only the concepts that pattern left unreferenced. Previously every delete also scanned every `:Concept` node in the graph for orphans.
+- A RabbitMQ publisher waiting to reconnect no longer holds its lock during `reconnect_delay`, so other requests keep publishing meanwhile, and concurrent failures trigger one reconnect instead of one each.
 - A discovered `/etc/mnemonic/config.yaml` or `./config.yaml` that exists but cannot be read or parsed now stops startup with `failed to read config file <path>`. Previously only an explicitly selected file failed; a broken discovered file was skipped and the service started on defaults and environment variables.
 
 ### Removed
