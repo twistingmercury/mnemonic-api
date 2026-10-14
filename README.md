@@ -70,7 +70,7 @@ Error response `traceId` identifies the active OpenTelemetry trace and is omitte
 
 ### Quick Start
 
-Prerequisites are Go 1.27.1, Docker, Docker Compose v2, and Git.
+Prerequisites are Go 1.27.2, Docker, Docker Compose v2, and Git.
 
 ```bash
 git clone https://github.com/twistingmercury/mnemonic-api.git
