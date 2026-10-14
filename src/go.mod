@@ -1,6 +1,6 @@
 module github.com/twistingmercury/mnemonic-api
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/exaring/otelpgx v0.13.0
