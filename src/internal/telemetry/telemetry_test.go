@@ -48,20 +48,6 @@ func createTestConfig() *config.MnemonicConfig {
 			RetryAttempts:        3,
 			RetryDelay:           time.Second,
 		},
-		RateLimit: config.RateLimitConfig{
-			Enabled:           false,
-			RequestsPerSecond: 100,
-			BurstSize:         200,
-			PerUser: config.PerUserRateLimit{
-				RequestsPerMinute: 60,
-				BurstSize:         10,
-			},
-		},
-		Enrichment: config.EnrichmentConfig{
-			MaxAttempts: 3,
-			RetryDelay:  30 * time.Second,
-			JobTimeout:  5 * time.Minute,
-		},
 		Logging: config.LoggingConfig{
 			Level:         "info",
 			Format:        "json",

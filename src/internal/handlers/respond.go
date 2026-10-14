@@ -63,23 +63,6 @@ func EncodeCursor(offset int) string {
 	return base64.URLEncoding.EncodeToString(data)
 }
 
-// DecodeCursor extracts the offset from an opaque cursor.
-// Returns 0 for empty or invalid cursors (first page).
-func DecodeCursor(cursor string) int {
-	if cursor == "" {
-		return 0
-	}
-	data, err := base64.URLEncoding.DecodeString(cursor)
-	if err != nil {
-		return 0
-	}
-	var payload CursorPayload
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return 0
-	}
-	return payload.Offset
-}
-
 // RespondError maps a service error to an RFC 7807 Problem Details response.
 func RespondError(c *gin.Context, err error) {
 	traceID := activeTraceID(c)
@@ -152,26 +135,6 @@ func RespondValidationError(c *gin.Context, detail string, fieldErrors []FieldEr
 	})
 }
 
-// ParseIntQuery parses an integer query parameter with a default value.
-// Clamps the result to [min, max].
-func ParseIntQuery(c *gin.Context, key string, defaultVal, minVal, maxVal int) int {
-	raw := c.Query(key)
-	if raw == "" {
-		return defaultVal
-	}
-	val, err := strconv.Atoi(raw)
-	if err != nil {
-		return defaultVal
-	}
-	if val < minVal {
-		return minVal
-	}
-	if val > maxVal {
-		return maxVal
-	}
-	return val
-}
-
 // ParseIntQueryStrict returns (value, true) or (defaultVal, false) when the raw value is out of [minVal, maxVal].
 // An empty string returns (defaultVal, true).
 func ParseIntQueryStrict(c *gin.Context, key string, defaultVal, minVal, maxVal int) (int, bool) {
@@ -201,26 +164,6 @@ func DecodeCursorStrict(cursor string) (int, bool) {
 		return 0, false
 	}
 	return payload.Offset, true
-}
-
-// ParseFloatQuery parses a float64 query parameter with a default value.
-// Clamps the result to [min, max].
-func ParseFloatQuery(c *gin.Context, key string, defaultVal, minVal, maxVal float64) float64 {
-	raw := c.Query(key)
-	if raw == "" {
-		return defaultVal
-	}
-	val, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return defaultVal
-	}
-	if val < minVal {
-		return minVal
-	}
-	if val > maxVal {
-		return maxVal
-	}
-	return val
 }
 
 // activeTraceID omits trace identity when no valid span context exists.
