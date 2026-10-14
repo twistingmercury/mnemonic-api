@@ -50,7 +50,7 @@ func NewPattern(meter metric.Meter) (*Pattern, error) {
 // Do not use user-provided or dynamic values to avoid metric explosion.
 func (m *Pattern) RecordQuery(ctx context.Context, database string, duration time.Duration, count int) {
 	attrs := metric.WithAttributes(attribute.String("database", database))
-	m.queryLatency.Record(ctx, float64(duration.Milliseconds()), attrs)
+	m.queryLatency.Record(ctx, milliseconds(duration), attrs)
 	m.patternsReturned.Record(ctx, int64(count), attrs)
 }
 
@@ -59,7 +59,7 @@ func (m *Pattern) RecordQuery(ctx context.Context, database string, duration tim
 // The database should be a predefined value with bounded cardinality.
 // Do not use user-provided or dynamic values to avoid metric explosion.
 func (m *Pattern) RecordQueryLatency(ctx context.Context, database string, duration time.Duration) {
-	m.queryLatency.Record(ctx, float64(duration.Milliseconds()),
+	m.queryLatency.Record(ctx, milliseconds(duration),
 		metric.WithAttributes(attribute.String("database", database)))
 }
 

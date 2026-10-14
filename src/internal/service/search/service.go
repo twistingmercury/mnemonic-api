@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
+	"github.com/twistingmercury/mnemonic-api/internal/metrics"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	"github.com/twistingmercury/mnemonic-api/internal/service"
 	openaisvc "github.com/twistingmercury/mnemonic-api/internal/service/openai"
@@ -59,18 +60,22 @@ type SearchResult struct {
 type searchService struct {
 	embeddingSvc openaisvc.EmbeddingService
 	chunkRepo    chunkrepo.Repository
+	metrics      *metrics.Pattern
 	logger       zerolog.Logger
 }
 
 // New creates a new search Service backed by the given dependencies.
+// patternMetrics may be nil, in which case vector search is not recorded.
 func New(
 	embeddingSvc openaisvc.EmbeddingService,
 	chunkRepo chunkrepo.Repository,
+	patternMetrics *metrics.Pattern,
 	logger zerolog.Logger,
 ) Service {
 	return &searchService{
 		embeddingSvc: embeddingSvc,
 		chunkRepo:    chunkRepo,
+		metrics:      patternMetrics,
 		logger:       logger,
 	}
 }
@@ -100,9 +105,13 @@ func (s *searchService) SearchPatterns(ctx context.Context, opts SearchOptions) 
 		Tags:          opts.Tags,
 	}
 
+	searchStart := time.Now()
 	rawMatches, err := s.chunkRepo.FindSimilar(ctx, embedding, simOpts)
 	if err != nil {
 		return nil, fmt.Errorf("find similar chunks: %w", err)
+	}
+	if s.metrics != nil {
+		s.metrics.RecordQuery(ctx, "pgvector", time.Since(searchStart), len(rawMatches))
 	}
 
 	matches := make([]*ChunkMatch, len(rawMatches))

@@ -16,7 +16,11 @@ import (
 
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
 )
@@ -94,20 +98,60 @@ type jobPayload struct {
 	JobID string `json:"job_id"`
 }
 
+// headerCarrier adapts amqp.Table to propagation.TextMapCarrier so trace
+// context travels to the consumer in the message headers.
+type headerCarrier amqp.Table
+
+func (c headerCarrier) Get(key string) string {
+	v, _ := c[key].(string)
+	return v
+}
+
+func (c headerCarrier) Set(key, value string) { c[key] = value }
+
+func (c headerCarrier) Keys() []string {
+	keys := make([]string, 0, len(c))
+	for k := range c {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Publish serialises jobID into a JSON message and delivers it to the
-// configured queue with persistent delivery mode. On publish failure it
-// attempts a single reconnect and retry before returning the error.
-func (p *Publisher) Publish(ctx context.Context, jobID uuid.UUID) error {
+// configured queue with persistent delivery mode. The message headers carry
+// the trace context of a producer span, so the consumer can continue the
+// trace. On publish failure it attempts a single reconnect and retry before
+// returning the error.
+func (p *Publisher) Publish(ctx context.Context, jobID uuid.UUID) (err error) {
+	ctx, span := otel.Tracer("mnemonic/queue").Start(ctx, "publish "+p.cfg.Queue,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.operation.type", "send"),
+			attribute.String("messaging.destination.name", p.cfg.Queue),
+			attribute.String("mnemonic.job_id", jobID.String()),
+		),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	body, err := json.Marshal(jobPayload{JobID: jobID.String()})
 	if err != nil {
 		return fmt.Errorf("rabbitmq: marshal payload: %w", err)
 	}
 
 	msg := amqp.Publishing{
+		Headers:      amqp.Table{},
 		DeliveryMode: amqp.Persistent,
 		ContentType:  "application/json",
 		Body:         body,
 	}
+	otel.GetTextMapPropagator().Inject(ctx, headerCarrier(msg.Headers))
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
