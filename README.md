@@ -106,7 +106,7 @@ Finding no file is fine: the service starts on defaults plus environment variabl
 
 `--health` probes `http://localhost:<port>/health` and exits non-zero unless it gets `200`. It resolves `server.port` from the same flag, file and environment sources as the server, but does not validate the rest of the configuration, so it runs without database, OpenAI or RabbitMQ credentials. An unreadable config file or a port outside 1-65535 fails the probe without sending a request.
 
-Nested keys use underscores in environment variables. For example, `server.port` becomes `MNEMONIC_SERVER_PORT`, and the OpenAI credential is `MNEMONIC_OPENAI_API_KEY`. This API has no `mcp.*` configuration; MCP settings belong to `mnemonic-mcp`.
+Nested keys use underscores in environment variables. For example, `server.port` becomes `MNEMONIC_SERVER_PORT`, and the OpenAI credential is `MNEMONIC_OPENAI_API_KEY`. `openai.base_url` (`MNEMONIC_OPENAI_BASE_URL`, default `https://api.openai.com/v1`) points the embedding client and the health check at an OpenAI-compatible endpoint; the E2E suite uses it to reach a local stub. This API has no `mcp.*` configuration; MCP settings belong to `mnemonic-mcp`.
 
 ### Testing
 
@@ -119,7 +119,7 @@ make tests-bench         # Internal package benchmarks
 make build               # Image build plus the full E2E suite
 ```
 
-The E2E suite uses the pre-migrated PostgreSQL and Neo4j images and requires Docker.
+The E2E suite uses the pre-migrated PostgreSQL and Neo4j images and a local OpenAI stub (`src/tests/openai-stub`), and requires Docker. It never calls api.openai.com.
 
 `make tests-integration` starts PostgreSQL on port 5435 in its own Compose project, declaring no volume so every run begins with an empty database, and tears it down afterwards. Scope it with `PKGS=./internal/service/pattern/...`. These tests carry the `integration` build tag and are skipped by `make tests-unit`; without `TEST_DATABASE_URL` they skip and still report `ok`, so use `GOFLAGS=-v` to confirm they actually ran.
 

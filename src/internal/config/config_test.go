@@ -1551,3 +1551,48 @@ func validConfig() *config.MnemonicConfig {
 		},
 	}
 }
+
+func TestOpenAIBaseURL_DefaultsToOpenAI(t *testing.T) {
+	clearMnemonicEnvVars(t)
+
+	v := viper.New()
+	config.SetDefaults(v)
+
+	cfg := &config.MnemonicConfig{}
+	require.NoError(t, v.Unmarshal(cfg))
+
+	assert.Equal(t, config.DefaultOpenAIBaseURL, cfg.OpenAI.BaseURL)
+}
+
+func TestOpenAIBaseURL_EnvOverride(t *testing.T) {
+	clearMnemonicEnvVars(t)
+	t.Setenv("MNEMONIC_OPENAI_BASE_URL", "http://localhost:8090/v1")
+
+	v := viper.New()
+	config.SetDefaults(v)
+	v.SetEnvPrefix("MNEMONIC")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	cfg := &config.MnemonicConfig{}
+	require.NoError(t, v.Unmarshal(cfg))
+
+	assert.Equal(t, "http://localhost:8090/v1", cfg.OpenAI.BaseURL)
+}
+
+func TestOpenAIBaseURL_ValidateRejectsBareString(t *testing.T) {
+	clearMnemonicEnvVars(t)
+
+	v := viper.New()
+	config.SetDefaults(v)
+	v.Set("openai.base_url", "not-a-url")
+
+	cfg := &config.MnemonicConfig{}
+	require.NoError(t, v.Unmarshal(cfg))
+
+	var fields []string
+	for _, e := range cfg.Validate() {
+		fields = append(fields, e.Field)
+	}
+	assert.Contains(t, fields, "openai.base_url")
+}

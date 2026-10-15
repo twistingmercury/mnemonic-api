@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twistingmercury/heartbeat/v2"
+	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
 )
 
@@ -64,4 +65,30 @@ func TestCheckHealth_OpenAIWarningDoesNotFail(t *testing.T) {
 	}
 
 	assert.NoError(t, health.CheckHealth())
+}
+
+func TestInitialize_OpenAIBaseURLOverridesDefault(t *testing.T) {
+	health.ResetForTest()
+	t.Cleanup(health.ResetForTest)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/models/text-embedding-3-large", r.URL.Path)
+		_, _ = w.Write([]byte(`{"id":"text-embedding-3-large"}`))
+	}))
+	defer srv.Close()
+
+	require.NoError(t, health.Initialize(health.Dependencies{
+		PGPool:      &mockPinger{},
+		Neo4jDriver: &mockConnVerifier{},
+		OpenAI: config.OpenAIConfig{
+			APIKey:         "sk-test",
+			BaseURL:        srv.URL + "/v1/",
+			EmbeddingModel: "text-embedding-3-large",
+		},
+	}))
+
+	descs := health.Descriptors()
+	require.Len(t, descs, 3)
+	result := descs[2].CheckFunc(context.Background())
+	assert.Equal(t, heartbeat.StatusOK, result.Status)
 }

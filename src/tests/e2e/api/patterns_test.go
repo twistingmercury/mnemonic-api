@@ -844,12 +844,6 @@ func TestSearchPatterns_ReturnsRankedResultsWithSimilarity(t *testing.T) {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
 
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
-	}
-
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
 
 	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
@@ -866,12 +860,6 @@ func TestSearchPatterns_ResultsIncludeContentAndScores(t *testing.T) {
 	resp, err := client.Get("/v1/api/patterns/search?q=test+query+for+content+and+scores")
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
-	}
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
 	}
 
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
@@ -897,12 +885,6 @@ func TestSearchPatterns_ResponseIncludesMetadata(t *testing.T) {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
 
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
-	}
-
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
 
 	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
@@ -925,12 +907,6 @@ func TestSearchPatterns_MetadataEchoesQueryString(t *testing.T) {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
 
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
-	}
-
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
 
 	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
@@ -946,12 +922,6 @@ func TestSearchPatterns_DefaultLimit(t *testing.T) {
 	resp, err := client.Get("/v1/api/patterns/search?q=default+limit+test")
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
-	}
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
 	}
 
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
@@ -972,12 +942,6 @@ func TestSearchPatterns_CustomLimit(t *testing.T) {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
 
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
-	}
-
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
 
 	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
@@ -993,12 +957,6 @@ func TestSearchPatterns_CustomThreshold(t *testing.T) {
 	resp, err := client.Get("/v1/api/patterns/search?q=threshold+test&threshold=0.9")
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
-	}
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
 	}
 
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
@@ -1019,12 +977,6 @@ func TestSearchPatterns_FilterByTags(t *testing.T) {
 	resp, err := client.Get("/v1/api/patterns/search?q=tag+filtered+search&tags=go,errors")
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search?tags=...: %v", err)
-	}
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
 	}
 
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
@@ -1061,12 +1013,6 @@ func TestSearchPatterns_OnlyEnrichedPatternsAppear(t *testing.T) {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
 
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		helpers.ReadBody(t, resp)
-		t.Skip("search unavailable: OpenAI API key not configured")
-		return
-	}
-
 	// Verify 200 + correct structure
 	helpers.AssertStatusCode(t, resp, http.StatusOK)
 
@@ -1076,7 +1022,7 @@ func TestSearchPatterns_OnlyEnrichedPatternsAppear(t *testing.T) {
 		t.Fatal("expected results field to be present")
 	}
 
-	// With dummy OpenAI key, no patterns will be enriched — our pattern should NOT appear
+	// No enricher runs in this suite, so the pattern stays unenriched and must not appear
 	for _, r := range searchResp.Results {
 		if r.PatternID == created.ID {
 			t.Errorf("expected non-enriched pattern %q to be excluded from search results", created.ID)

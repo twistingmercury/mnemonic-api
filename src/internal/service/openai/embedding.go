@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/twistingmercury/mnemonic-api/internal/config"
@@ -28,8 +29,8 @@ type EmbeddingService interface {
 	Embed(ctx context.Context, text string) ([]float32, error)
 }
 
-// embeddingsEndpoint is the default OpenAI embeddings API URL.
-// It can be overridden for testing via the baseURL field.
+// embeddingsEndpoint is the OpenAI embeddings API URL used when
+// openai.base_url is not set.
 const embeddingsEndpoint = "https://api.openai.com/v1/embeddings"
 
 type openaiEmbedding struct {
@@ -44,12 +45,16 @@ type openaiEmbedding struct {
 
 // NewEmbeddingService creates an EmbeddingService backed by the OpenAI embeddings API.
 func NewEmbeddingService(cfg config.OpenAIConfig) EmbeddingService {
+	endpoint := embeddingsEndpoint
+	if cfg.BaseURL != "" {
+		endpoint = strings.TrimRight(cfg.BaseURL, "/") + "/embeddings"
+	}
 	return &openaiEmbedding{
 		client: &http.Client{
 			Timeout:   30 * time.Second,
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
 		},
-		baseURL:    embeddingsEndpoint,
+		baseURL:    endpoint,
 		apiKey:     cfg.APIKey,
 		model:      cfg.EmbeddingModel,
 		dimensions: cfg.EmbeddingDimensions,
