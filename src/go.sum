@@ -180,10 +180,10 @@ github.com/swaggo/gin-swagger v1.6.1 h1:Ri06G4gc9N4t4k8hekMigJ9zKTFSlqj/9paAQCQs
 github.com/swaggo/gin-swagger v1.6.1/go.mod h1:LQ+hJStHakCWRiK/YNYtJOu4mR2FP+pxLnILT/qNiTw=
 github.com/swaggo/swag v1.16.6 h1:qBNcx53ZaX+M5dxVyTrgQ0PJ/ACK+NzhwcbieTt+9yI=
 github.com/swaggo/swag v1.16.6/go.mod h1:ngP2etMK5a0P3QBizic5MEwpRmluJZPHjXcMoj4Xesg=
-github.com/twistingmercury/heartbeat v1.1.2 h1:/eKpP5U4aYRUkxubuQjErwzUXyps2OBDOkhEDIL4Ouc=
-github.com/twistingmercury/heartbeat v1.1.2/go.mod h1:aRTq38PnK/I7hXi10X3kFdOMN+ezbvIDBnoaTI+4IL0=
-github.com/twistingmercury/otelx v1.0.1 h1:xAA7Q4bNaCs1f/jTf2+tN+pK77obx2GHWnJd7b+vsgw=
-github.com/twistingmercury/otelx v1.0.1/go.mod h1:36PCsa02vDURtA5WXbiPAtO+d0P0jyDLyRB+4Q+LNMU=
+github.com/twistingmercury/heartbeat/v2 v2.0.0 h1:pftyxWk+z0TlwoYfCO+ZkI0AyGVZKKXROjJcq4vl6I4=
+github.com/twistingmercury/heartbeat/v2 v2.0.0/go.mod h1:R8fqkBsKVkE/qGzBHIu9PCtNm9ZI77Y0D86vfgwWW1Q=
+github.com/twistingmercury/otelx/v2 v2.0.0 h1:zbtW9/AGeeP8s+nNVKg2THp7CMehWgzwg5q1BTnh7ww=
+github.com/twistingmercury/otelx/v2 v2.0.0/go.mod h1:EWzKqRkf6sXKjZyQyD/e/hGKkvJ+GSYLYe5STDWplkM=
 github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/ugorji/go/codec v1.3.2 h1:zkEASHHyEClGeURfgNT9PJZVfAbs9oEX9QXggwWNJbc=
