@@ -20,7 +20,7 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func TestEncodeCursor_DecodeCursor_Roundtrip(t *testing.T) {
+func TestEncodeCursor_DecodeCursorStrict_Roundtrip(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
@@ -35,26 +35,29 @@ func TestEncodeCursor_DecodeCursor_Roundtrip(t *testing.T) {
 			t.Parallel()
 			cursor := handlers.EncodeCursor(tt.offset)
 			assert.NotEmpty(t, cursor)
-			got := handlers.DecodeCursor(cursor)
+			got, ok := handlers.DecodeCursorStrict(cursor)
+			assert.True(t, ok)
 			assert.Equal(t, tt.offset, got)
 		})
 	}
 }
 
-func TestDecodeCursor_InvalidInput(t *testing.T) {
+func TestDecodeCursorStrict(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
 		cursor string
+		wantOK bool
 	}{
-		{name: "empty string", cursor: ""},
-		{name: "invalid base64", cursor: "not-valid-base64!!!"},
-		{name: "valid base64 but invalid json", cursor: "aGVsbG8="},
+		{name: "empty string is the first page", cursor: "", wantOK: true},
+		{name: "invalid base64", cursor: "not-valid-base64!!!", wantOK: false},
+		{name: "valid base64 but invalid json", cursor: "aGVsbG8=", wantOK: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := handlers.DecodeCursor(tt.cursor)
+			got, ok := handlers.DecodeCursorStrict(tt.cursor)
+			assert.Equal(t, tt.wantOK, ok)
 			assert.Equal(t, 0, got)
 		})
 	}
@@ -146,21 +149,19 @@ func TestRespondError_ServiceErrors(t *testing.T) {
 	}
 }
 
-func TestParseIntQuery(t *testing.T) {
+func TestParseIntQueryStrict(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		query      string
-		defaultVal int
-		minVal     int
-		maxVal     int
-		want       int
+		name   string
+		query  string
+		want   int
+		wantOK bool
 	}{
-		{name: "missing param uses default", query: "", defaultVal: 20, minVal: 1, maxVal: 100, want: 20},
-		{name: "valid param", query: "50", defaultVal: 20, minVal: 1, maxVal: 100, want: 50},
-		{name: "below min", query: "0", defaultVal: 20, minVal: 1, maxVal: 100, want: 1},
-		{name: "above max", query: "500", defaultVal: 20, minVal: 1, maxVal: 100, want: 100},
-		{name: "non-numeric uses default", query: "abc", defaultVal: 20, minVal: 1, maxVal: 100, want: 20},
+		{name: "missing param uses default", query: "", want: 20, wantOK: true},
+		{name: "valid param", query: "50", want: 50, wantOK: true},
+		{name: "below min", query: "0", want: 20, wantOK: false},
+		{name: "above max", query: "500", want: 20, wantOK: false},
+		{name: "non-numeric", query: "abc", want: 20, wantOK: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,7 +170,8 @@ func TestParseIntQuery(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodGet, "/test?limit="+tt.query, nil)
 
-			got := handlers.ParseIntQuery(c, "limit", tt.defaultVal, tt.minVal, tt.maxVal)
+			got, ok := handlers.ParseIntQueryStrict(c, "limit", 20, 1, 100)
+			assert.Equal(t, tt.wantOK, ok)
 			assert.Equal(t, tt.want, got)
 		})
 	}

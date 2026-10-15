@@ -272,79 +272,6 @@ func TestRepository_Get(t *testing.T) {
 	}
 }
 
-func TestRepository_GetByName(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now()
-	patternID := uuid.New()
-	tagsJSON, _ := json.Marshal([]string{"tag1"})
-	relatedPatternsJSON, _ := json.Marshal([]string{})
-	desc := "Test description"
-
-	tests := []struct {
-		name        string
-		patternName string
-		setupMock   func(mock pgxmock.PgxPoolIface)
-		wantErr     error
-	}{
-		{
-			name:        "successful retrieval",
-			patternName: "test-pattern",
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
-					"entity_type", "language", "domain", "version", "related_patterns",
-					"enrichment_status", "enrichment_error", "enriched_at",
-					"created_at", "updated_at",
-				}).AddRow(
-					patternID, "test-pattern", &desc, "Content", tagsJSON,
-					"go-pattern", "go", "backend", nil, relatedPatternsJSON,
-					"pending", nil, nil, now, now,
-				)
-				mock.ExpectQuery("SELECT .* FROM patterns").
-					WithArgs("test-pattern").
-					WillReturnRows(rows)
-			},
-			wantErr: nil,
-		},
-		{
-			name:        "not found returns ErrNotFound",
-			patternName: "nonexistent",
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectQuery("SELECT .* FROM patterns").
-					WithArgs("nonexistent").
-					WillReturnError(pgx.ErrNoRows)
-			},
-			wantErr: pattern.ErrNotFound,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			mock, err := pgxmock.NewPool()
-			require.NoError(t, err)
-			defer mock.Close()
-
-			tt.setupMock(mock)
-
-			repo := pattern.NewRepository(mock)
-			p, err := repo.GetByName(context.Background(), tt.patternName)
-
-			if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-				assert.Nil(t, p)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.patternName, p.Name)
-			}
-
-			assert.NoError(t, mock.ExpectationsWereMet())
-		})
-	}
-}
-
 func TestRepository_Update(t *testing.T) {
 	t.Parallel()
 
@@ -586,18 +513,18 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "pattern-a", &desc, "Content A", tagsJSON,
+					AddRow(uuid.New(), "pattern-a", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"pending", nil, nil, now, now, int64(2)).
-					AddRow(uuid.New(), "pattern-b", &desc, "Content B", tagsJSON,
+					AddRow(uuid.New(), "pattern-b", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"enriched", nil, &now, now, now, int64(2))
-				mock.ExpectQuery("SELECT .* FROM patterns ORDER BY name").
+				mock.ExpectQuery("SELECT id, name, description, tags,.* FROM patterns ORDER BY name").
 					WillReturnRows(rows)
 			},
 			wantCount: 2,
@@ -610,12 +537,12 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "enriched-pattern", &desc, "Content", tagsJSON,
+					AddRow(uuid.New(), "enriched-pattern", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"enriched", nil, &now, now, now, int64(1))
 				mock.ExpectQuery("SELECT .* FROM patterns.*WHERE enrichment_status").
@@ -632,12 +559,12 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{Limit: 1, Offset: 1},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "pattern-b", &desc, "Content", tagsJSON,
+					AddRow(uuid.New(), "pattern-b", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"pending", nil, nil, now, now, int64(3))
 				mock.ExpectQuery("SELECT .* FROM patterns.*LIMIT.*OFFSET").
@@ -654,7 +581,7 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
@@ -672,12 +599,12 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "auth-pattern", &desc, "Content about auth", tagsJSON,
+					AddRow(uuid.New(), "auth-pattern", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"pending", nil, nil, now, now, int64(1))
 				// Query should include to_tsvector and plainto_tsquery for full-text search
@@ -713,113 +640,8 @@ func TestRepository_List(t *testing.T) {
 
 				for i, expectedName := range tt.wantNames {
 					assert.Equal(t, expectedName, patterns[i].Name)
+					assert.Empty(t, patterns[i].Content, "list never loads content")
 				}
-			}
-
-			assert.NoError(t, mock.ExpectationsWereMet())
-		})
-	}
-}
-
-func TestRepository_UpdateEnrichmentStatus(t *testing.T) {
-	t.Parallel()
-
-	errMsg := "embedding generation failed"
-
-	tests := []struct {
-		name      string
-		patternID uuid.UUID
-		status    string
-		errMsg    *string
-		setupMock func(mock pgxmock.PgxPoolIface)
-		wantErr   error
-	}{
-		{
-			name:      "update to enriched status",
-			patternID: uuid.New(),
-			status:    "enriched",
-			errMsg:    nil,
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectExec("UPDATE patterns SET").
-					WithArgs(
-						pgxmock.AnyArg(), // id
-						"enriched",
-						pgxmock.AnyArg(), // error message (nil *string)
-						pgxmock.AnyArg(), // enriched_at (should be set)
-						pgxmock.AnyArg(), // updated_at
-					).
-					WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-			},
-			wantErr: nil,
-		},
-		{
-			name:      "update to failed status with error",
-			patternID: uuid.New(),
-			status:    "failed",
-			errMsg:    &errMsg,
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectExec("UPDATE patterns SET").
-					WithArgs(
-						pgxmock.AnyArg(), // id
-						"failed",
-						pgxmock.AnyArg(), // error message
-						pgxmock.AnyArg(), // enriched_at (should be nil for failed)
-						pgxmock.AnyArg(), // updated_at
-					).
-					WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-			},
-			wantErr: nil,
-		},
-		{
-			name:      "pattern not found",
-			patternID: uuid.New(),
-			status:    "enriched",
-			errMsg:    nil,
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectExec("UPDATE patterns SET").
-					WithArgs(
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-					).
-					WillReturnResult(pgxmock.NewResult("UPDATE", 0))
-			},
-			wantErr: pattern.ErrNotFound,
-		},
-		{
-			name:      "invalid status returns error",
-			patternID: uuid.New(),
-			status:    "invalid_status",
-			errMsg:    nil,
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				// No database call expected - validation fails first
-			},
-			wantErr: nil, // We'll check for error message content instead
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			mock, err := pgxmock.NewPool()
-			require.NoError(t, err)
-			defer mock.Close()
-
-			tt.setupMock(mock)
-
-			repo := pattern.NewRepository(mock)
-			err = repo.UpdateEnrichmentStatus(context.Background(), tt.patternID, tt.status, tt.errMsg)
-
-			if tt.name == "invalid status returns error" {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "invalid enrichment status")
-			} else if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-			} else {
-				assert.NoError(t, err)
 			}
 
 			assert.NoError(t, mock.ExpectationsWereMet())
@@ -891,29 +713,6 @@ func TestRepository_Exists(t *testing.T) {
 			}
 
 			assert.NoError(t, mock.ExpectationsWereMet())
-		})
-	}
-}
-
-func TestPattern_IsValidEnrichmentStatus(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		status string
-		want   bool
-	}{
-		{"pending", true},
-		{"enriched", true},
-		{"failed", true},
-		{"invalid", false},
-		{"PENDING", false}, // case-sensitive
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.status, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, repository.IsValidEnrichmentStatus(tt.status))
 		})
 	}
 }

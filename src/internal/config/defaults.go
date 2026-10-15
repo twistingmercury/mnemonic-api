@@ -43,26 +43,6 @@ const (
 	DefaultOpenAIRetryDelay           = 1 * time.Second
 )
 
-// Default values for rate limiting configuration
-const (
-	DefaultRateLimitEnabled           = false
-	DefaultRateLimitRequestsPerSecond = 100
-	DefaultRateLimitBurstSize         = 200
-	DefaultRateLimitPerUserRPM        = 60
-	DefaultRateLimitPerUserBurst      = 10
-)
-
-// Default values for enrichment configuration
-const (
-	DefaultEnrichmentMaxAttempts            = 3
-	DefaultEnrichmentRetryDelay             = 30 * time.Second
-	DefaultEnrichmentJobTimeout             = 5 * time.Minute
-	DefaultEnrichmentDrainTimeout           = 30 * time.Second
-	DefaultEnrichmentCompletedRetention     = 168 * time.Hour // 7 days
-	DefaultEnrichmentFailedRetention        = 720 * time.Hour // 30 days
-	DefaultEnrichmentRelatedToMinSimilarity = 0.3
-)
-
 // Default values for logging configuration
 const (
 	DefaultLoggingLevel         = "info"

@@ -4,573 +4,230 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j/db"
 )
 
-// CypherRunner abstracts the ability to run Cypher queries.
-// This interface is satisfied by neo4j.ManagedTransaction and can be
-// implemented by test mocks without needing unexported methods.
-type CypherRunner interface {
-	Run(ctx context.Context, cypher string, params map[string]any) (ResultCollector, error)
-}
-
-// ResultCollector abstracts the ability to collect results from a Cypher query.
-// This interface wraps the subset of neo4j.ResultWithContext that this package uses.
-type ResultCollector interface {
-	Collect(ctx context.Context) ([]*db.Record, error)
-	Single(ctx context.Context) (*db.Record, error)
-}
-
-// SessionExecutor abstracts Neo4j session operations for testability.
-type SessionExecutor interface {
-	ExecuteRead(ctx context.Context, work func(runner CypherRunner) (any, error)) (any, error)
-	ExecuteWrite(ctx context.Context, work func(runner CypherRunner) (any, error)) (any, error)
-	Close(ctx context.Context) error
-}
-
-// SessionFactory creates SessionExecutor instances.
-// This allows the repository to be tested without a real Neo4j driver.
-type SessionFactory func(ctx context.Context) SessionExecutor
-
-// Repository defines data access operations for the Neo4j knowledge graph.
+// Repository defines the knowledge-graph operations the API needs. Writing
+// concepts and RELATED_TO edges is the enricher's job.
 type Repository interface {
-	// SyncPattern creates or updates a Pattern node in the graph.
-	SyncPattern(ctx context.Context, pattern *Pattern) error
-
-	// DeletePattern removes a Pattern node and all its relationships from the graph.
+	// DeletePattern removes a Pattern node and all its relationships from the
+	// graph, along with any of its concepts that no other pattern mentions.
 	DeletePattern(ctx context.Context, patternID uuid.UUID) error
 
-	// SyncConcepts replaces all MENTIONED_IN relationships for a pattern with the provided concepts.
-	SyncConcepts(ctx context.Context, patternID uuid.UUID, concepts []Concept) error
-
-	// ComputeRelatedToEdges deletes existing RELATED_TO edges for the given pattern
-	// and recomputes them based on shared concepts. Only edges with similarity >= minSimilarity
-	// are created. The similarity is computed as: shared_concepts / max(total_concepts_a, total_concepts_b).
-	// Called by EnrichmentService.ProcessJob after concept extraction.
-	ComputeRelatedToEdges(ctx context.Context, patternID uuid.UUID, minSimilarity float64) error
-
-	// GetPatternConcepts returns all concepts linked to a pattern via MENTIONED_IN relationships.
-	GetPatternConcepts(ctx context.Context, patternID uuid.UUID) ([]Concept, error)
+	// GetPatternGraph returns up to relatedLimit related patterns and all
+	// concepts for a pattern, using a single session and read transaction.
+	GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (*PatternGraph, error)
 
 	// FindRelatedPatterns finds patterns related to the given pattern using pre-computed RELATED_TO edges.
 	// Results include similarity scores and shared concept names.
 	FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPattern, error)
-
-	// CleanupOrphanedConcepts removes concept nodes with no MENTIONED_IN relationships.
-	CleanupOrphanedConcepts(ctx context.Context) (int64, error)
-
-	// HealthCheck verifies connectivity to the Neo4j database.
-	HealthCheck(ctx context.Context) error
 }
 
 // neo4jRepository is a Neo4j implementation of Repository.
 type neo4jRepository struct {
-	driver        neo4j.DriverWithContext
-	database      string
-	factory       SessionFactory
-	healthCheckFn func(ctx context.Context) error
+	driver   neo4j.DriverWithContext
+	database string
 }
 
 // NewRepository creates a new Neo4j-backed Repository.
 func NewRepository(driver neo4j.DriverWithContext, database string) Repository {
-	r := &neo4jRepository{
-		driver:        driver,
-		database:      database,
-		healthCheckFn: driver.VerifyConnectivity,
+	return &neo4jRepository{driver: driver, database: database}
+}
+
+var errNilPatternID = errors.New("patternID must not be nil UUID")
+
+// query runs one auto-committed, retried Cypher statement and returns its records.
+func (r *neo4jRepository) query(ctx context.Context, write bool, cypher string, params map[string]any) ([]*neo4j.Record, error) {
+	routing := neo4j.ExecuteQueryWithReadersRouting()
+	if write {
+		routing = neo4j.ExecuteQueryWithWritersRouting()
 	}
-	r.factory = r.defaultSessionFactory
-	return r
-}
-
-// neo4jSessionAdapter wraps a neo4j.SessionWithContext to satisfy SessionExecutor.
-type neo4jSessionAdapter struct {
-	session neo4j.SessionWithContext
-}
-
-// neo4jCypherRunnerAdapter wraps a neo4j.ManagedTransaction to satisfy CypherRunner.
-type neo4jCypherRunnerAdapter struct {
-	tx neo4j.ManagedTransaction
-}
-
-// neo4jResultAdapter wraps a neo4j.ResultWithContext to satisfy ResultCollector.
-type neo4jResultAdapter struct {
-	result neo4j.ResultWithContext
-}
-
-func (a *neo4jResultAdapter) Collect(ctx context.Context) ([]*db.Record, error) {
-	return a.result.Collect(ctx)
-}
-
-func (a *neo4jResultAdapter) Single(ctx context.Context) (*db.Record, error) {
-	return a.result.Single(ctx)
-}
-
-func (a *neo4jCypherRunnerAdapter) Run(ctx context.Context, cypher string, params map[string]any) (ResultCollector, error) {
-	result, err := a.tx.Run(ctx, cypher, params)
+	res, err := neo4j.ExecuteQuery(ctx, r.driver, cypher, params, neo4j.EagerResultTransformer,
+		neo4j.ExecuteQueryWithDatabase(r.database), routing)
 	if err != nil {
 		return nil, err
 	}
-	return &neo4jResultAdapter{result: result}, nil
+	return res.Records, nil
 }
 
-func (a *neo4jSessionAdapter) ExecuteRead(ctx context.Context, work func(runner CypherRunner) (any, error)) (any, error) {
-	return a.session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		return work(&neo4jCypherRunnerAdapter{tx: tx})
-	})
-}
-
-func (a *neo4jSessionAdapter) ExecuteWrite(ctx context.Context, work func(runner CypherRunner) (any, error)) (any, error) {
-	return a.session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		return work(&neo4jCypherRunnerAdapter{tx: tx})
-	})
-}
-
-func (a *neo4jSessionAdapter) Close(ctx context.Context) error {
-	return a.session.Close(ctx)
-}
-
-// defaultSessionFactory creates a real Neo4j session wrapped in an adapter.
-func (r *neo4jRepository) defaultSessionFactory(ctx context.Context) SessionExecutor {
-	session := r.driver.NewSession(ctx, neo4j.SessionConfig{
-		DatabaseName: r.database,
-	})
-	return &neo4jSessionAdapter{session: session}
-}
-
-// SyncPattern creates or updates a Pattern node in the graph.
-func (r *neo4jRepository) SyncPattern(ctx context.Context, pattern *Pattern) (err error) {
-	if pattern == nil {
-		return errors.New("pattern must not be nil")
-	}
-	if strings.TrimSpace(pattern.Name) == "" {
-		return errors.New("pattern name must not be empty")
-	}
-
-	session := r.factory(ctx)
-	defer func() {
-		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing session: %w", closeErr)
-		}
-	}()
-
-	var desc any
-	if pattern.Description != nil {
-		desc = *pattern.Description
-	}
-
-	_, err = session.ExecuteWrite(ctx, func(runner CypherRunner) (any, error) {
-		_, err := runner.Run(ctx,
-			`MERGE (p:Pattern {id: $patternId})
-			 SET p.name = $patternName,
-			     p.description = $patternDescription,
-			     p.updatedAt = datetime()`,
-			map[string]any{
-				"patternId":          pattern.ID.String(),
-				"patternName":        pattern.Name,
-				"patternDescription": desc,
-			},
-		)
-		return nil, err
-	})
-
-	if err != nil {
-		return fmt.Errorf("syncing pattern %s: %w", pattern.ID, err)
-	}
-	return nil
-}
-
-// DeletePattern removes a Pattern node and all its relationships from the graph.
-func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID) (err error) {
+// DeletePattern removes a Pattern node and all its relationships from the
+// graph, along with any of its concepts that no other pattern mentions.
+func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID) error {
 	if patternID == uuid.Nil {
-		return errors.New("patternID must not be nil UUID")
+		return errNilPatternID
 	}
 
-	session := r.factory(ctx)
-	defer func() {
-		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing session: %w", closeErr)
-		}
-	}()
-
-	_, err = session.ExecuteWrite(ctx, func(runner CypherRunner) (any, error) {
-		_, err := runner.Run(ctx,
-			"MATCH (p:Pattern {id: $patternId}) DETACH DELETE p",
-			map[string]any{"patternId": patternID.String()},
-		)
-		return nil, err
-	})
-
+	_, err := r.query(ctx, true,
+		// Collect the pattern's concepts before detaching it, then drop only
+		// those no other pattern mentions. This replaces a graph-wide orphan
+		// sweep with work proportional to one pattern.
+		`MATCH (p:Pattern {id: $patternId})
+		 OPTIONAL MATCH (c:Concept)-[:MENTIONED_IN]->(p)
+		 WITH p, collect(c) AS concepts
+		 DETACH DELETE p
+		 WITH concepts
+		 UNWIND concepts AS c
+		 WITH c WHERE NOT (c)-[:MENTIONED_IN]->()
+		 DELETE c`,
+		map[string]any{"patternId": patternID.String()},
+	)
 	if err != nil {
 		return fmt.Errorf("deleting pattern %s: %w", patternID, err)
 	}
 	return nil
 }
 
-// SyncConcepts replaces all MENTIONED_IN relationships for a pattern with the provided concepts.
-func (r *neo4jRepository) SyncConcepts(ctx context.Context, patternID uuid.UUID, concepts []Concept) (err error) {
+const conceptsCypher = `MATCH (c:Concept)-[:MENTIONED_IN]->(p:Pattern {id: $patternId})
+	 RETURN c.name AS name, c.type AS type
+	 ORDER BY c.name`
+
+const relatedCypher = `MATCH (p1:Pattern {id: $patternId})-[r:RELATED_TO]-(p2:Pattern)
+	 WITH p1, p2, r.similarity AS similarity
+	 OPTIONAL MATCH (p1)<-[:MENTIONED_IN]-(c:Concept)-[:MENTIONED_IN]->(p2)
+	 WITH p2, similarity, collect(c.name) AS conceptNames, count(c) AS sharedConcepts
+	 ORDER BY similarity DESC
+	 LIMIT $limit
+	 RETURN p2.id AS id, p2.name AS name, sharedConcepts, similarity, conceptNames`
+
+// GetPatternGraph runs the related-patterns and concepts queries in one
+// session and read transaction, instead of a session per query.
+func (r *neo4jRepository) GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (_ *PatternGraph, err error) {
 	if patternID == uuid.Nil {
-		return errors.New("patternID must not be nil UUID")
+		return nil, errNilPatternID
 	}
 
-	session := r.factory(ctx)
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: r.database, AccessMode: neo4j.AccessModeRead})
 	defer func() {
 		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
 			err = fmt.Errorf("closing session: %w", closeErr)
 		}
 	}()
 
-	// Extract concept names for the diff-based delete query.
-	conceptNames := make([]string, len(concepts))
-	for i, c := range concepts {
-		conceptNames[i] = c.Name
-	}
+	graph, err := neo4j.ExecuteRead(ctx, session, func(tx neo4j.ManagedTransaction) (*PatternGraph, error) {
+		params := map[string]any{"patternId": patternID.String(), "limit": relatedLimit}
 
-	_, err = session.ExecuteWrite(ctx, func(runner CypherRunner) (any, error) {
-		// Step 1: Remove MENTIONED_IN relationships only for concepts NOT in the new list.
-		// When conceptNames is empty, WHERE NOT c.name IN [] matches everything,
-		// so all existing relationships are removed.
-		_, err := runner.Run(ctx,
-			`MATCH (c:Concept)-[r:MENTIONED_IN]->(p:Pattern {id: $patternId})
-			 WHERE NOT c.name IN $conceptNames
-			 DELETE r`,
-			map[string]any{
-				"patternId":    patternID.String(),
-				"conceptNames": conceptNames,
-			},
-		)
+		res, err := tx.Run(ctx, relatedCypher, params)
 		if err != nil {
-			return nil, fmt.Errorf("removing old MENTIONED_IN relationships: %w", err)
+			return nil, err
 		}
-
-		if len(concepts) == 0 {
-			return nil, nil
-		}
-
-		// Step 2: MERGE concepts and relationships (idempotent — no-op if unchanged).
-		conceptMaps := make([]map[string]any, len(concepts))
-		for i, c := range concepts {
-			conceptMaps[i] = map[string]any{
-				"name": c.Name,
-				"type": c.Type,
-			}
-		}
-
-		_, err = runner.Run(ctx,
-			`UNWIND $concepts AS concept
-			 MERGE (c:Concept {name: concept.name})
-			 ON CREATE SET c.type = concept.type, c.createdAt = datetime()
-			 ON MATCH SET c.type = concept.type
-			 WITH c
-			 MATCH (p:Pattern {id: $patternId})
-			 MERGE (c)-[:MENTIONED_IN]->(p)`,
-			map[string]any{
-				"patternId": patternID.String(),
-				"concepts":  conceptMaps,
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("creating concepts and relationships: %w", err)
-		}
-
-		return nil, nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("syncing concepts for pattern %s: %w", patternID, err)
-	}
-	return nil
-}
-
-// ComputeRelatedToEdges deletes existing RELATED_TO edges for the given pattern
-// and recomputes them based on shared concepts.
-func (r *neo4jRepository) ComputeRelatedToEdges(ctx context.Context, patternID uuid.UUID, minSimilarity float64) (err error) {
-	if patternID == uuid.Nil {
-		return errors.New("patternID must not be nil UUID")
-	}
-
-	session := r.factory(ctx)
-	defer func() {
-		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing session: %w", closeErr)
-		}
-	}()
-
-	_, err = session.ExecuteWrite(ctx, func(runner CypherRunner) (any, error) {
-		// Step 1: Delete existing RELATED_TO edges for this pattern.
-		_, err := runner.Run(ctx,
-			`MATCH (p:Pattern {id: $patternId})-[r:RELATED_TO]-()
-			 DELETE r`,
-			map[string]any{"patternId": patternID.String()},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("deleting existing RELATED_TO edges: %w", err)
-		}
-
-		// Step 2: Find patterns sharing concepts, compute similarity, create edges.
-		_, err = runner.Run(ctx,
-			`MATCH (p1:Pattern {id: $patternId})<-[:MENTIONED_IN]-(c:Concept)-[:MENTIONED_IN]->(p2:Pattern)
-			 WHERE p1 <> p2
-			 WITH p1, p2, count(DISTINCT c) AS sharedCount
-			 OPTIONAL MATCH (c1:Concept)-[:MENTIONED_IN]->(p1)
-			 WITH p1, p2, sharedCount, count(DISTINCT c1) AS totalA
-			 OPTIONAL MATCH (c2:Concept)-[:MENTIONED_IN]->(p2)
-			 WITH p1, p2, sharedCount, totalA, count(DISTINCT c2) AS totalB
-			 WITH p1, p2, sharedCount,
-			      CASE WHEN totalA > totalB THEN totalA ELSE totalB END AS maxTotal
-			 WITH p1, p2, sharedCount,
-			      CASE WHEN maxTotal = 0 THEN 0.0
-			           ELSE toFloat(sharedCount) / toFloat(maxTotal)
-			      END AS similarity
-			 WHERE similarity >= $minSimilarity
-			 CREATE (p1)-[:RELATED_TO {similarity: similarity, updatedAt: datetime()}]->(p2)`,
-			map[string]any{
-				"patternId":     patternID.String(),
-				"minSimilarity": minSimilarity,
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("computing RELATED_TO edges: %w", err)
-		}
-
-		return nil, nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("computing related-to edges for pattern %s: %w", patternID, err)
-	}
-	return nil
-}
-
-// GetPatternConcepts returns all concepts linked to a pattern via MENTIONED_IN relationships.
-func (r *neo4jRepository) GetPatternConcepts(ctx context.Context, patternID uuid.UUID) (_ []Concept, err error) {
-	if patternID == uuid.Nil {
-		return nil, errors.New("patternID must not be nil UUID")
-	}
-
-	session := r.factory(ctx)
-	defer func() {
-		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing session: %w", closeErr)
-		}
-	}()
-
-	result, err := session.ExecuteRead(ctx, func(runner CypherRunner) (any, error) {
-		res, err := runner.Run(ctx,
-			`MATCH (c:Concept)-[:MENTIONED_IN]->(p:Pattern {id: $patternId})
-			 RETURN c.name AS name, c.type AS type
-			 ORDER BY c.name`,
-			map[string]any{"patternId": patternID.String()},
-		)
+		relatedRecs, err := res.Collect(ctx)
 		if err != nil {
 			return nil, err
 		}
 
-		records, err := res.Collect(ctx)
+		res, err = tx.Run(ctx, conceptsCypher, params)
+		if err != nil {
+			return nil, err
+		}
+		conceptRecs, err := res.Collect(ctx)
 		if err != nil {
 			return nil, err
 		}
 
-		concepts := make([]Concept, 0, len(records))
-		for _, record := range records {
-			nameVal, ok := record.Get("name")
-			if !ok {
-				return nil, fmt.Errorf("missing 'name' field in record")
-			}
-			nameStr, ok := nameVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'name': %T", nameVal)
-			}
-
-			typeVal, ok := record.Get("type")
-			if !ok {
-				return nil, fmt.Errorf("missing 'type' field in record")
-			}
-			typeStr, ok := typeVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'type': %T", typeVal)
-			}
-
-			concepts = append(concepts, Concept{
-				Name: nameStr,
-				Type: typeStr,
-			})
+		g := &PatternGraph{
+			RelatedPatterns: make([]RelatedPattern, 0, len(relatedRecs)),
+			Concepts:        make([]Concept, 0, len(conceptRecs)),
 		}
-
-		return concepts, nil
+		for _, rec := range relatedRecs {
+			rp, err := toRelatedPattern(rec)
+			if err != nil {
+				return nil, err
+			}
+			g.RelatedPatterns = append(g.RelatedPatterns, rp)
+		}
+		for _, rec := range conceptRecs {
+			c, err := toConcept(rec)
+			if err != nil {
+				return nil, err
+			}
+			g.Concepts = append(g.Concepts, c)
+		}
+		return g, nil
 	})
-
 	if err != nil {
-		return nil, fmt.Errorf("getting concepts for pattern %s: %w", patternID, err)
+		return nil, fmt.Errorf("getting graph for pattern %s: %w", patternID, err)
 	}
+	return graph, nil
+}
 
-	return result.([]Concept), nil
+func toConcept(rec *neo4j.Record) (Concept, error) {
+	name, _, err := neo4j.GetRecordValue[string](rec, "name")
+	if err != nil {
+		return Concept{}, err
+	}
+	typ, _, err := neo4j.GetRecordValue[string](rec, "type")
+	if err != nil {
+		return Concept{}, err
+	}
+	return Concept{Name: name, Type: typ}, nil
 }
 
 // FindRelatedPatterns finds patterns related to the given pattern using pre-computed RELATED_TO edges.
 // Results include similarity scores and shared concept names.
-func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) (_ []RelatedPattern, err error) {
+func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPattern, error) {
 	if patternID == uuid.Nil {
-		return nil, errors.New("patternID must not be nil UUID")
+		return nil, errNilPatternID
 	}
 
-	session := r.factory(ctx)
-	defer func() {
-		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing session: %w", closeErr)
-		}
-	}()
-
-	result, err := session.ExecuteRead(ctx, func(runner CypherRunner) (any, error) {
-		res, err := runner.Run(ctx,
-			`MATCH (p1:Pattern {id: $patternId})-[r:RELATED_TO]-(p2:Pattern)
-			 WITH p1, p2, r.similarity AS similarity
-			 OPTIONAL MATCH (p1)<-[:MENTIONED_IN]-(c:Concept)-[:MENTIONED_IN]->(p2)
-			 WITH p2, similarity, collect(c.name) AS conceptNames, count(c) AS sharedConcepts
-			 ORDER BY similarity DESC
-			 LIMIT $limit
-			 RETURN p2.id AS id, p2.name AS name, sharedConcepts, similarity, conceptNames`,
-			map[string]any{
-				"patternId": patternID.String(),
-				"limit":     limit,
-			},
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		records, err := res.Collect(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		patterns := make([]RelatedPattern, 0, len(records))
-		for _, record := range records {
-			idVal, ok := record.Get("id")
-			if !ok {
-				return nil, fmt.Errorf("missing 'id' field in record")
-			}
-			idStr, ok := idVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'id': %T", idVal)
-			}
-
-			nameVal, ok := record.Get("name")
-			if !ok {
-				return nil, fmt.Errorf("missing 'name' field in record")
-			}
-			nameStr, ok := nameVal.(string)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'name': %T", nameVal)
-			}
-
-			sharedVal, ok := record.Get("sharedConcepts")
-			if !ok {
-				return nil, fmt.Errorf("missing 'sharedConcepts' field in record")
-			}
-			sharedInt, ok := sharedVal.(int64)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'sharedConcepts': %T", sharedVal)
-			}
-
-			similarityVal, ok := record.Get("similarity")
-			if !ok {
-				return nil, fmt.Errorf("missing 'similarity' field in record")
-			}
-			similarityFloat, ok := similarityVal.(float64)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'similarity': %T", similarityVal)
-			}
-
-			conceptNamesVal, ok := record.Get("conceptNames")
-			if !ok {
-				return nil, fmt.Errorf("missing 'conceptNames' field in record")
-			}
-			conceptNamesRaw, ok := conceptNamesVal.([]any)
-			if !ok {
-				return nil, fmt.Errorf("unexpected type for 'conceptNames': %T", conceptNamesVal)
-			}
-			conceptNames := make([]string, 0, len(conceptNamesRaw))
-			for _, v := range conceptNamesRaw {
-				s, ok := v.(string)
-				if !ok {
-					return nil, fmt.Errorf("unexpected type for concept name element: %T", v)
-				}
-				conceptNames = append(conceptNames, s)
-			}
-
-			parsedID, err := uuid.Parse(idStr)
-			if err != nil {
-				return nil, fmt.Errorf("parsing pattern ID %q: %w", idStr, err)
-			}
-
-			patterns = append(patterns, RelatedPattern{
-				ID:             parsedID,
-				Name:           nameStr,
-				SharedConcepts: int(sharedInt),
-				Similarity:     similarityFloat,
-				ConceptNames:   conceptNames,
-			})
-		}
-
-		return patterns, nil
-	})
-
+	records, err := r.query(ctx, false, relatedCypher,
+		map[string]any{"patternId": patternID.String(), "limit": limit},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("finding related patterns for %s: %w", patternID, err)
 	}
 
-	return result.([]RelatedPattern), nil
+	patterns := make([]RelatedPattern, 0, len(records))
+	for _, rec := range records {
+		rp, err := toRelatedPattern(rec)
+		if err != nil {
+			return nil, fmt.Errorf("finding related patterns for %s: %w", patternID, err)
+		}
+		patterns = append(patterns, rp)
+	}
+	return patterns, nil
 }
 
-// CleanupOrphanedConcepts removes concept nodes with no MENTIONED_IN relationships.
-func (r *neo4jRepository) CleanupOrphanedConcepts(ctx context.Context) (_ int64, err error) {
-	session := r.factory(ctx)
-	defer func() {
-		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
-			err = fmt.Errorf("closing session: %w", closeErr)
-		}
-	}()
-
-	result, err := session.ExecuteWrite(ctx, func(runner CypherRunner) (any, error) {
-		res, err := runner.Run(ctx,
-			`MATCH (c:Concept)
-			 WHERE NOT (c)-[:MENTIONED_IN]->()
-			 DELETE c
-			 RETURN count(c) AS deletedCount`,
-			nil,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		record, err := res.Single(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		deletedVal, ok := record.Get("deletedCount")
-		if !ok {
-			return nil, fmt.Errorf("missing 'deletedCount' field in record")
-		}
-		deletedCount, ok := deletedVal.(int64)
-		if !ok {
-			return nil, fmt.Errorf("unexpected type for 'deletedCount': %T", deletedVal)
-		}
-		return deletedCount, nil
-	})
-
+func toRelatedPattern(rec *neo4j.Record) (RelatedPattern, error) {
+	idStr, _, err := neo4j.GetRecordValue[string](rec, "id")
 	if err != nil {
-		return 0, fmt.Errorf("cleaning up orphaned concepts: %w", err)
+		return RelatedPattern{}, err
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return RelatedPattern{}, fmt.Errorf("parsing pattern ID %q: %w", idStr, err)
+	}
+	name, _, err := neo4j.GetRecordValue[string](rec, "name")
+	if err != nil {
+		return RelatedPattern{}, err
+	}
+	shared, _, err := neo4j.GetRecordValue[int64](rec, "sharedConcepts")
+	if err != nil {
+		return RelatedPattern{}, err
+	}
+	similarity, _, err := neo4j.GetRecordValue[float64](rec, "similarity")
+	if err != nil {
+		return RelatedPattern{}, err
+	}
+	rawNames, _, err := neo4j.GetRecordValue[[]any](rec, "conceptNames")
+	if err != nil {
+		return RelatedPattern{}, err
+	}
+	names := make([]string, 0, len(rawNames))
+	for _, v := range rawNames {
+		s, ok := v.(string)
+		if !ok {
+			return RelatedPattern{}, fmt.Errorf("unexpected type for concept name element: %T", v)
+		}
+		names = append(names, s)
 	}
 
-	return result.(int64), nil
-}
-
-// HealthCheck verifies connectivity to the Neo4j database.
-func (r *neo4jRepository) HealthCheck(ctx context.Context) error {
-	return r.healthCheckFn(ctx)
+	return RelatedPattern{
+		ID:             id,
+		Name:           name,
+		SharedConcepts: int(shared),
+		Similarity:     similarity,
+		ConceptNames:   names,
+	}, nil
 }

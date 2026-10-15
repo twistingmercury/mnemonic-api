@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -35,11 +36,19 @@ type PublisherConfig struct {
 	ReconnectDelay time.Duration
 }
 
+// channel is the part of *amqp.Channel the publisher uses, so tests can drive
+// the reconnect path without a broker.
+type channel interface {
+	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	Close() error
+}
+
 // Publisher implements queue.Publisher backed by a RabbitMQ broker.
 type Publisher struct {
 	cfg             PublisherConfig
-	conn            *amqp.Connection
-	ch              *amqp.Channel
+	conn            io.Closer
+	ch              channel
+	dial            func() (io.Closer, channel, error)
 	mu              sync.Mutex
 	publishFailures metric.Int64Counter
 }
@@ -63,30 +72,44 @@ func NewPublisher(cfg PublisherConfig, meter metric.Meter) (queue.Publisher, err
 		return nil, fmt.Errorf("rabbitmq: create publish failures counter: %w", err)
 	}
 
+	p := &Publisher{cfg: cfg, publishFailures: counter}
+	p.dial = p.dialBroker
+
+	conn, ch, err := p.dial()
+	if err != nil {
+		return nil, err
+	}
+	p.conn, p.ch = conn, ch
+	return p, nil
+}
+
+// dialBroker opens a connection and channel and declares the queue, closing
+// whatever it opened if a later step fails.
+func (p *Publisher) dialBroker() (io.Closer, channel, error) {
 	conn, err := amqp.DialConfig(
-		fmt.Sprintf("amqp://%s:%d/", cfg.Host, cfg.Port),
+		fmt.Sprintf("amqp://%s:%d/", p.cfg.Host, p.cfg.Port),
 		amqp.Config{
-			SASL:  []amqp.Authentication{&amqp.PlainAuth{Username: cfg.User, Password: cfg.Password}}, // #nosec G101 — value supplied via config, not hardcoded in source
-			Vhost: cfg.VHost,
+			SASL:  []amqp.Authentication{&amqp.PlainAuth{Username: p.cfg.User, Password: p.cfg.Password}}, // #nosec G101 — value supplied via config, not hardcoded in source
+			Vhost: p.cfg.VHost,
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("rabbitmq: dial: %w", err)
+		return nil, nil, fmt.Errorf("rabbitmq: dial: %w", err)
 	}
 
 	ch, err := conn.Channel()
 	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("rabbitmq: open channel: %w", err)
+		return nil, nil, fmt.Errorf("rabbitmq: open channel: %w", err)
 	}
 
-	if _, err = ch.QueueDeclare(cfg.Queue, true, false, false, false, nil); err != nil {
+	if _, err = ch.QueueDeclare(p.cfg.Queue, true, false, false, false, nil); err != nil {
 		_ = ch.Close()
 		_ = conn.Close()
-		return nil, fmt.Errorf("rabbitmq: declare queue %q: %w", cfg.Queue, err)
+		return nil, nil, fmt.Errorf("rabbitmq: declare queue %q: %w", p.cfg.Queue, err)
 	}
 
-	return &Publisher{cfg: cfg, conn: conn, ch: ch, publishFailures: counter}, nil
+	return conn, ch, nil
 }
 
 // jobPayload is the JSON body published for each enrichment job.
@@ -95,8 +118,12 @@ type jobPayload struct {
 }
 
 // Publish serialises jobID into a JSON message and delivers it to the
-// configured queue with persistent delivery mode. On publish failure it
-// attempts a single reconnect and retry before returning the error.
+// configured queue with persistent delivery mode. On publish failure it waits
+// ReconnectDelay, reconnects once (unless another caller already has) and
+// retries before returning the error.
+//
+// The mutex guards the channel, not the wait: the delay is slept without the
+// lock so concurrent publishers are not all stalled behind one reconnect.
 func (p *Publisher) Publish(ctx context.Context, jobID uuid.UUID) error {
 	body, err := json.Marshal(jobPayload{JobID: jobID.String()})
 	if err != nil {
@@ -110,25 +137,42 @@ func (p *Publisher) Publish(ctx context.Context, jobID uuid.UUID) error {
 	}
 
 	p.mu.Lock()
+	failed := p.ch
+	err = failed.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg)
+	p.mu.Unlock()
+	if err == nil {
+		return nil
+	}
+
+	select {
+	case <-time.After(p.cfg.ReconnectDelay):
+	case <-ctx.Done():
+		p.publishFailures.Add(ctx, 1)
+		return fmt.Errorf("rabbitmq: publish failed and reconnect cancelled: %w", errors.Join(err, ctx.Err()))
+	}
+
+	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if err = p.ch.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg); err != nil {
-		if reconnErr := p.reconnect(ctx); reconnErr != nil {
+	// Another publisher may have reconnected while this one waited; reuse its
+	// channel rather than tearing down a healthy connection.
+	if p.ch == failed {
+		if reconnErr := p.reconnect(); reconnErr != nil {
 			p.publishFailures.Add(ctx, 1)
 			return fmt.Errorf("rabbitmq: publish failed and reconnect failed: %w", errors.Join(err, reconnErr))
 		}
-		if retryErr := p.ch.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg); retryErr != nil {
-			p.publishFailures.Add(ctx, 1)
-			return fmt.Errorf("rabbitmq: publish retry: %w", retryErr)
-		}
+	}
+	if retryErr := p.ch.PublishWithContext(ctx, "", p.cfg.Queue, false, false, msg); retryErr != nil {
+		p.publishFailures.Add(ctx, 1)
+		return fmt.Errorf("rabbitmq: publish retry: %w", retryErr)
 	}
 
 	return nil
 }
 
-// reconnect closes the stale channel and connection, then re-dials the broker
-// and re-declares the queue. It replaces p.conn and p.ch on success.
-func (p *Publisher) reconnect(ctx context.Context) error {
+// reconnect closes the stale channel and connection and dials afresh,
+// replacing p.conn and p.ch on success. The caller must hold p.mu.
+func (p *Publisher) reconnect() error {
 	// Ignore close errors on stale resources.
 	if p.ch != nil {
 		_ = p.ch.Close()
@@ -137,33 +181,9 @@ func (p *Publisher) reconnect(ctx context.Context) error {
 		_ = p.conn.Close()
 	}
 
-	select {
-	case <-time.After(p.cfg.ReconnectDelay):
-	case <-ctx.Done():
-		return fmt.Errorf("rabbitmq: reconnect cancelled: %w", ctx.Err())
-	}
-
-	conn, err := amqp.DialConfig(
-		fmt.Sprintf("amqp://%s:%d/", p.cfg.Host, p.cfg.Port),
-		amqp.Config{
-			SASL:  []amqp.Authentication{&amqp.PlainAuth{Username: p.cfg.User, Password: p.cfg.Password}}, // #nosec G101 — value supplied via config, not hardcoded in source
-			Vhost: p.cfg.VHost,
-		},
-	)
+	conn, ch, err := p.dial()
 	if err != nil {
-		return fmt.Errorf("rabbitmq: reconnect dial: %w", err)
-	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("rabbitmq: reconnect open channel: %w", err)
-	}
-
-	if _, err = ch.QueueDeclare(p.cfg.Queue, true, false, false, false, nil); err != nil {
-		_ = ch.Close()
-		_ = conn.Close()
-		return fmt.Errorf("rabbitmq: reconnect declare queue %q: %w", p.cfg.Queue, err)
+		return fmt.Errorf("rabbitmq: reconnect: %w", err)
 	}
 
 	p.conn = conn
