@@ -17,7 +17,7 @@ func TestRepository_RejectsNilPatternID(t *testing.T) {
 
 	assert.ErrorContains(t, repo.DeletePattern(ctx, uuid.Nil), "patternID must not be nil UUID")
 
-	_, err := repo.GetPatternConcepts(ctx, uuid.Nil)
+	_, err := repo.GetPatternGraph(ctx, uuid.Nil, 10)
 	assert.ErrorContains(t, err, "patternID must not be nil UUID")
 
 	_, err = repo.FindRelatedPatterns(ctx, uuid.Nil, 10)

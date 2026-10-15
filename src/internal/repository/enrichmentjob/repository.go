@@ -12,8 +12,9 @@ import (
 
 // Repository defines data access operations for enrichment jobs.
 type Repository interface {
-	// Create stores a new enrichment job.
-	Create(ctx context.Context, job *Job) error
+	// CreatePendingForChunks stores one pending job per chunk in a single
+	// statement and returns the new job IDs in the same order as chunkIDs.
+	CreatePendingForChunks(ctx context.Context, chunkIDs []uuid.UUID) ([]uuid.UUID, error)
 
 	// WithTx returns a Repository that executes all operations within db.
 	// Use this to enlist the repository in a caller-owned transaction.
@@ -30,69 +31,43 @@ func NewRepository(db repository.DBTX) Repository {
 	return &pgxRepository{db: db}
 }
 
-// Create stores a new enrichment job in the database.
-// Uses SQL now() for timestamps to ensure consistency with database time.
-// Uses COALESCE to handle scheduled_for - if not provided, defaults to now().
-func (r *pgxRepository) Create(ctx context.Context, job *Job) error {
-	// Generate UUID if not provided
-	if job.ID == uuid.Nil {
-		job.ID = uuid.New()
+// CreatePendingForChunks inserts one pending job per chunk with a single
+// INSERT ... SELECT FROM unnest, so the cost is one round trip regardless of
+// how many chunks a pattern has. Job IDs are generated here so the caller gets
+// them back in chunk order without depending on RETURNING row order.
+func (r *pgxRepository) CreatePendingForChunks(ctx context.Context, chunkIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(chunkIDs) == 0 {
+		return []uuid.UUID{}, nil
 	}
 
-	// Set defaults
-	if job.Status == "" {
-		job.Status = StatusPending
-	}
-	if job.MaxAttempts == 0 {
-		job.MaxAttempts = DefaultMaxAttempts
+	jobIDs := make([]uuid.UUID, len(chunkIDs))
+	for i := range jobIDs {
+		jobIDs[i] = uuid.New()
 	}
 
-	// Use COALESCE to default scheduled_for to now() if not set
 	query := `
 		INSERT INTO enrichment_jobs (
-			id, pattern_id, chunk_id, status, attempts, max_attempts,
-			last_error, scheduled_for, started_at, completed_at,
-			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, now()), $9, $10, now(), now())
-		RETURNING scheduled_for, created_at, updated_at
+			id, chunk_id, status, attempts, max_attempts,
+			scheduled_for, created_at, updated_at
+		)
+		SELECT u.id, u.chunk_id, $3, 0, $4, now(), now(), now()
+		FROM unnest($1::uuid[], $2::uuid[]) AS u(id, chunk_id)
 	`
 
-	// Handle nil scheduled_for for COALESCE
-	var scheduledForArg any
-	if job.ScheduledFor.IsZero() {
-		scheduledForArg = nil
-	} else {
-		scheduledForArg = job.ScheduledFor
-	}
-
-	err := r.db.QueryRow(ctx, query,
-		job.ID,
-		job.PatternID,
-		job.ChunkID,
-		string(job.Status),
-		job.Attempts,
-		job.MaxAttempts,
-		job.LastError,
-		scheduledForArg,
-		job.StartedAt,
-		job.CompletedAt,
-	).Scan(&job.ScheduledFor, &job.CreatedAt, &job.UpdatedAt)
-	if err != nil {
+	if _, err := r.db.Exec(ctx, query, jobIDs, chunkIDs, string(StatusPending), DefaultMaxAttempts); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			switch pgErr.Code {
 			case repository.PgErrCodeUniqueViolation:
-				return ErrJobAlreadyPending
-			case repository.PgErrCodeForeignKeyViolation:
-				return ErrPatternNotFound
+				return nil, ErrJobAlreadyPending
 			case repository.PgErrCodeCheckViolation:
-				return ErrInvalidJobTarget
+				return nil, ErrInvalidJobTarget
 			}
 		}
-		return fmt.Errorf("create enrichment job: %w", err)
+		return nil, fmt.Errorf("create enrichment jobs: %w", err)
 	}
 
-	return nil
+	return jobIDs, nil
 }
 
 // WithTx returns a Repository that executes all operations within db.

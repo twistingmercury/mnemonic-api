@@ -3,7 +3,6 @@ package enrichmentjob_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -11,196 +10,74 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/twistingmercury/mnemonic-api/internal/repository"
 	"github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
 )
 
-// testJob returns a sample enrichment job for testing.
-func testJob() *enrichmentjob.Job {
-	pid := uuid.New()
-	return &enrichmentjob.Job{
-		ID:           uuid.New(),
-		PatternID:    &pid,
-		Status:       enrichmentjob.StatusPending,
-		Attempts:     0,
-		MaxAttempts:  3,
-		ScheduledFor: time.Now(),
-	}
-}
-
-func TestRepository_Create(t *testing.T) {
+func TestRepository_CreatePendingForChunks(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now()
+	t.Run("empty input makes no DB call", func(t *testing.T) {
+		t.Parallel()
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
 
-	tests := []struct {
-		name      string
-		job       *enrichmentjob.Job
-		setupMock func(mock pgxmock.PgxPoolIface)
-		wantErr   error
+		ids, err := enrichmentjob.NewRepository(mock).CreatePendingForChunks(context.Background(), nil)
+		require.NoError(t, err)
+		assert.Empty(t, ids)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("one statement for all chunks, ids returned in chunk order", func(t *testing.T) {
+		t.Parallel()
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		chunkIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+		mock.ExpectExec(`INSERT INTO enrichment_jobs .* unnest`).
+			WithArgs(
+				pgxmock.AnyArg(),
+				chunkIDs,
+				string(enrichmentjob.StatusPending),
+				enrichmentjob.DefaultMaxAttempts,
+			).
+			WillReturnResult(pgxmock.NewResult("INSERT", 3))
+
+		ids, err := enrichmentjob.NewRepository(mock).CreatePendingForChunks(context.Background(), chunkIDs)
+		require.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+
+		require.Len(t, ids, 3)
+		seen := map[uuid.UUID]bool{}
+		for _, id := range ids {
+			assert.NotEqual(t, uuid.Nil, id)
+			seen[id] = true
+		}
+		assert.Len(t, seen, 3, "job ids are distinct")
+	})
+
+	pgErrCases := []struct {
+		code string
+		want error
 	}{
-		{
-			name: "successful creation - pattern-based job",
-			job:  testJob(),
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				rows := pgxmock.NewRows([]string{"scheduled_for", "created_at", "updated_at"}).
-					AddRow(now, now, now)
-				mock.ExpectQuery("INSERT INTO enrichment_jobs").
-					WithArgs(
-						pgxmock.AnyArg(), // id
-						pgxmock.AnyArg(), // pattern_id
-						pgxmock.AnyArg(), // chunk_id
-						"pending",
-						0,                // attempts
-						3,                // max_attempts
-						pgxmock.AnyArg(), // last_error
-						pgxmock.AnyArg(), // scheduled_for
-						pgxmock.AnyArg(), // started_at
-						pgxmock.AnyArg(), // completed_at
-					).
-					WillReturnRows(rows)
-			},
-			wantErr: nil,
-		},
-		{
-			name: "successful creation - chunk-based job",
-			job: func() *enrichmentjob.Job {
-				cid := uuid.New()
-				return &enrichmentjob.Job{
-					ID:          uuid.New(),
-					PatternID:   nil,
-					ChunkID:     &cid,
-					Status:      enrichmentjob.StatusPending,
-					Attempts:    0,
-					MaxAttempts: 3,
-				}
-			}(),
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				rows := pgxmock.NewRows([]string{"scheduled_for", "created_at", "updated_at"}).
-					AddRow(now, now, now)
-				mock.ExpectQuery("INSERT INTO enrichment_jobs").
-					WithArgs(
-						pgxmock.AnyArg(), // id
-						pgxmock.AnyArg(), // pattern_id (nil)
-						pgxmock.AnyArg(), // chunk_id
-						"pending",
-						0,                // attempts
-						3,                // max_attempts
-						pgxmock.AnyArg(), // last_error
-						pgxmock.AnyArg(), // scheduled_for
-						pgxmock.AnyArg(), // started_at
-						pgxmock.AnyArg(), // completed_at
-					).
-					WillReturnRows(rows)
-			},
-			wantErr: nil,
-		},
-		{
-			name: "pattern not found returns ErrPatternNotFound",
-			job:  testJob(),
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectQuery("INSERT INTO enrichment_jobs").
-					WithArgs(
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-					).
-					WillReturnError(&pgconn.PgError{Code: "23503"})
-			},
-			wantErr: enrichmentjob.ErrPatternNotFound,
-		},
-		{
-			name: "check violation returns ErrInvalidJobTarget",
-			job:  testJob(),
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectQuery("INSERT INTO enrichment_jobs").
-					WithArgs(
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-						pgxmock.AnyArg(),
-					).
-					WillReturnError(&pgconn.PgError{Code: "23514"})
-			},
-			wantErr: enrichmentjob.ErrInvalidJobTarget,
-		},
+		{repository.PgErrCodeUniqueViolation, enrichmentjob.ErrJobAlreadyPending},
+		{repository.PgErrCodeCheckViolation, enrichmentjob.ErrInvalidJobTarget},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range pgErrCases {
+		t.Run("maps pg error "+tc.code, func(t *testing.T) {
 			t.Parallel()
-
 			mock, err := pgxmock.NewPool()
 			require.NoError(t, err)
 			defer mock.Close()
 
-			tt.setupMock(mock)
+			mock.ExpectExec(`INSERT INTO enrichment_jobs`).
+				WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+				WillReturnError(&pgconn.PgError{Code: tc.code})
 
-			repo := enrichmentjob.NewRepository(mock)
-			err = repo.Create(context.Background(), tt.job)
-
-			if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-			} else {
-				assert.NoError(t, err)
-				assert.False(t, tt.job.CreatedAt.IsZero())
-				assert.False(t, tt.job.UpdatedAt.IsZero())
-			}
-
-			assert.NoError(t, mock.ExpectationsWereMet())
+			_, err = enrichmentjob.NewRepository(mock).CreatePendingForChunks(context.Background(), []uuid.UUID{uuid.New()})
+			assert.ErrorIs(t, err, tc.want)
 		})
 	}
-}
-
-func TestRepository_Create_GeneratesUUID(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now()
-	mock, err := pgxmock.NewPool()
-	require.NoError(t, err)
-	defer mock.Close()
-
-	pid := uuid.New()
-	job := &enrichmentjob.Job{
-		// ID is not set - should be generated
-		PatternID: &pid,
-	}
-
-	rows := pgxmock.NewRows([]string{"scheduled_for", "created_at", "updated_at"}).
-		AddRow(now, now, now)
-	mock.ExpectQuery("INSERT INTO enrichment_jobs").
-		WithArgs(
-			pgxmock.AnyArg(), // generated id
-			pgxmock.AnyArg(), // pattern_id
-			pgxmock.AnyArg(), // chunk_id
-			"pending",        // default status
-			0,                // default attempts
-			3,                // default max_attempts
-			pgxmock.AnyArg(),
-			pgxmock.AnyArg(),
-			pgxmock.AnyArg(),
-			pgxmock.AnyArg(),
-		).
-		WillReturnRows(rows)
-
-	repo := enrichmentjob.NewRepository(mock)
-	err = repo.Create(context.Background(), job)
-
-	assert.NoError(t, err)
-	assert.NotEqual(t, uuid.Nil, job.ID)
-	assert.Equal(t, enrichmentjob.StatusPending, job.Status)
-	assert.Equal(t, 3, job.MaxAttempts)
-	assert.NoError(t, mock.ExpectationsWereMet())
 }

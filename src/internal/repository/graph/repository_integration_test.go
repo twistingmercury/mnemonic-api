@@ -206,59 +206,75 @@ func TestIntegration_FindRelatedPatterns(t *testing.T) {
 	})
 }
 
-func TestIntegration_GetPatternConcepts(t *testing.T) {
+func TestIntegration_GetPatternGraph(t *testing.T) {
 	driver, repo := setupNeo4j(t)
 	ctx := context.Background()
 
-	t.Run("returns concepts ordered by name", func(t *testing.T) {
-		id := seedPattern(t, driver, "get-concepts", "gamma", "alpha", "beta")
+	t.Run("returns related patterns and concepts ordered by name", func(t *testing.T) {
+		pA := seedPattern(t, driver, "graph-a", "gamma", "alpha", "beta")
+		pB := seedPattern(t, driver, "graph-b", "alpha")
+		pC := seedPattern(t, driver, "graph-c", "beta")
+		relate(t, driver, pA, pB, 0.5)
+		relate(t, driver, pC, pA, 0.9)
 
-		concepts, err := repo.GetPatternConcepts(ctx, id)
+		g, err := repo.GetPatternGraph(ctx, pA, 10)
 		require.NoError(t, err)
-		require.Len(t, concepts, 3)
-		assert.Equal(t, testIntegrationConceptPrefix+"alpha", concepts[0].Name)
-		assert.Equal(t, testIntegrationConceptPrefix+"beta", concepts[1].Name)
-		assert.Equal(t, testIntegrationConceptPrefix+"gamma", concepts[2].Name)
-		for _, c := range concepts {
+
+		require.Len(t, g.Concepts, 3)
+		assert.Equal(t, testIntegrationConceptPrefix+"alpha", g.Concepts[0].Name)
+		assert.Equal(t, testIntegrationConceptPrefix+"beta", g.Concepts[1].Name)
+		assert.Equal(t, testIntegrationConceptPrefix+"gamma", g.Concepts[2].Name)
+		for _, c := range g.Concepts {
 			assert.Equal(t, "technology", c.Type)
 		}
+
+		require.Len(t, g.RelatedPatterns, 2)
+		assert.Equal(t, pC, g.RelatedPatterns[0].ID, "ordered by similarity")
+		assert.Equal(t, []string{testIntegrationConceptPrefix + "beta"}, g.RelatedPatterns[0].ConceptNames)
+		assert.Equal(t, pB, g.RelatedPatterns[1].ID)
+
+		g, err = repo.GetPatternGraph(ctx, pA, 1)
+		require.NoError(t, err)
+		assert.Len(t, g.RelatedPatterns, 1, "respects the related limit")
+		assert.Len(t, g.Concepts, 3, "the limit does not apply to concepts")
 	})
 
-	t.Run("pattern with no concepts", func(t *testing.T) {
-		id := seedPattern(t, driver, "get-concepts-empty")
+	t.Run("pattern with no concepts or edges", func(t *testing.T) {
+		id := seedPattern(t, driver, "graph-empty")
 
-		concepts, err := repo.GetPatternConcepts(ctx, id)
+		g, err := repo.GetPatternGraph(ctx, id, 10)
 		require.NoError(t, err)
-		assert.Empty(t, concepts)
+		assert.Empty(t, g.Concepts)
+		assert.Empty(t, g.RelatedPatterns)
 	})
 
 	t.Run("nonexistent pattern", func(t *testing.T) {
-		concepts, err := repo.GetPatternConcepts(ctx, uuid.New())
+		g, err := repo.GetPatternGraph(ctx, uuid.New(), 10)
 		require.NoError(t, err)
-		assert.Empty(t, concepts)
+		assert.Empty(t, g.Concepts)
+		assert.Empty(t, g.RelatedPatterns)
 	})
 }
 
-func TestIntegration_CleanupOrphanedConcepts(t *testing.T) {
+func TestIntegration_DeletePatternRemovesOnlyItsOrphanedConcepts(t *testing.T) {
 	driver, repo := setupNeo4j(t)
 	ctx := context.Background()
 
-	orphanSource := seedPattern(t, driver, "orphan-source", "orphan-a", "orphan-b", "orphan-c")
-	seedPattern(t, driver, "active-concepts", "active-x", "active-y")
-	require.NoError(t, repo.DeletePattern(ctx, orphanSource))
+	source := seedPattern(t, driver, "orphan-source", "orphan-a", "orphan-b", "orphan-shared")
+	seedPattern(t, driver, "orphan-neighbour", "orphan-shared")
+	// An orphan that was never attached to source must survive: the cleanup is
+	// scoped to the deleted pattern's concepts, not a graph-wide sweep.
+	cypher(t, driver, `CREATE (:Concept {name: $name, type: 'technology'})`,
+		map[string]any{"name": testIntegrationConceptPrefix + "orphan-unrelated"})
 
-	deleted, err := repo.CleanupOrphanedConcepts(ctx)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, deleted, int64(3))
+	require.NoError(t, repo.DeletePattern(ctx, source))
 
-	assert.Equal(t, int64(0), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-"),
-		"orphaned concepts should be removed")
-	assert.Equal(t, int64(2), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"active-"),
-		"concepts still mentioned should be kept")
-
-	deleted, err = repo.CleanupOrphanedConcepts(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), deleted, "second run should find nothing")
+	assert.Equal(t, int64(0), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-a"))
+	assert.Equal(t, int64(0), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-b"))
+	assert.Equal(t, int64(1), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-shared"),
+		"a concept another pattern still mentions is kept")
+	assert.Equal(t, int64(1), countConceptsByPrefix(t, driver, testIntegrationConceptPrefix+"orphan-unrelated"),
+		"orphans not attached to the deleted pattern are left alone")
 }
 
 func TestIntegration_ContextCancellation(t *testing.T) {
@@ -272,9 +288,6 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 	_, err := repo.FindRelatedPatterns(ctx, uuid.New(), 10)
 	assert.Error(t, err)
 
-	_, err = repo.GetPatternConcepts(ctx, uuid.New())
-	assert.Error(t, err)
-
-	_, err = repo.CleanupOrphanedConcepts(ctx)
+	_, err = repo.GetPatternGraph(ctx, uuid.New(), 10)
 	assert.Error(t, err)
 }

@@ -29,7 +29,7 @@ type Repository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 
 	// List retrieves patterns with filtering and pagination.
-	// Returns the patterns, total count, and any error.
+	// Returns the patterns (with Content left empty), total count, and any error.
 	List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, int64, error)
 
 	// Exists checks if a pattern with the given ID exists.
@@ -260,7 +260,9 @@ func (r *pgxRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// List retrieves patterns with filtering and pagination.
+// List retrieves patterns with filtering and pagination. Content is not
+// selected: list responses only carry summary fields, and content is the
+// largest column by far.
 func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, int64, error) {
 	// Build query dynamically based on filter
 	var whereConditions []string
@@ -315,7 +317,7 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 
 	// Build query with window function for total count
 	query := fmt.Sprintf(`
-		SELECT id, name, description, content, tags,
+		SELECT id, name, description, tags,
 			   entity_type, language, domain, version, related_patterns,
 			   enrichment_status, enrichment_error, enriched_at,
 			   created_at, updated_at,
@@ -357,7 +359,6 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 			&p.ID,
 			&p.Name,
 			&p.Description,
-			&p.Content,
 			&tagsJSON,
 			&p.EntityType,
 			&p.Language,

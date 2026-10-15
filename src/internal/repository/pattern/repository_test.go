@@ -513,18 +513,18 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "pattern-a", &desc, "Content A", tagsJSON,
+					AddRow(uuid.New(), "pattern-a", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"pending", nil, nil, now, now, int64(2)).
-					AddRow(uuid.New(), "pattern-b", &desc, "Content B", tagsJSON,
+					AddRow(uuid.New(), "pattern-b", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"enriched", nil, &now, now, now, int64(2))
-				mock.ExpectQuery("SELECT .* FROM patterns ORDER BY name").
+				mock.ExpectQuery("SELECT id, name, description, tags,.* FROM patterns ORDER BY name").
 					WillReturnRows(rows)
 			},
 			wantCount: 2,
@@ -537,12 +537,12 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "enriched-pattern", &desc, "Content", tagsJSON,
+					AddRow(uuid.New(), "enriched-pattern", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"enriched", nil, &now, now, now, int64(1))
 				mock.ExpectQuery("SELECT .* FROM patterns.*WHERE enrichment_status").
@@ -559,12 +559,12 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{Limit: 1, Offset: 1},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "pattern-b", &desc, "Content", tagsJSON,
+					AddRow(uuid.New(), "pattern-b", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"pending", nil, nil, now, now, int64(3))
 				mock.ExpectQuery("SELECT .* FROM patterns.*LIMIT.*OFFSET").
@@ -581,7 +581,7 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
@@ -599,12 +599,12 @@ func TestRepository_List(t *testing.T) {
 			opts:   repository.ListOptions{},
 			setupMock: func(mock pgxmock.PgxPoolIface) {
 				rows := pgxmock.NewRows([]string{
-					"id", "name", "description", "content", "tags",
+					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
 					"created_at", "updated_at", "total_count",
 				}).
-					AddRow(uuid.New(), "auth-pattern", &desc, "Content about auth", tagsJSON,
+					AddRow(uuid.New(), "auth-pattern", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
 						"pending", nil, nil, now, now, int64(1))
 				// Query should include to_tsvector and plainto_tsquery for full-text search
@@ -640,6 +640,7 @@ func TestRepository_List(t *testing.T) {
 
 				for i, expectedName := range tt.wantNames {
 					assert.Equal(t, expectedName, patterns[i].Name)
+					assert.Empty(t, patterns[i].Content, "list never loads content")
 				}
 			}
 

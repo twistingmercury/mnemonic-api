@@ -54,7 +54,7 @@ func (m *mockChunkRepo) Get(ctx context.Context, id uuid.UUID) (*chunkrepo.Chunk
 	return args.Get(0).(*chunkrepo.Chunk), args.Error(1)
 }
 
-func (m *mockChunkRepo) ListByPatternID(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
+func (m *mockChunkRepo) ListSummariesByPatternID(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
 	args := m.Called(ctx, patternID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

@@ -224,4 +224,57 @@ func TestIntegration_UpdateResetsEnrichedParent(t *testing.T) {
 	}
 }
 
+// TestIntegration_CreateBatchesChunksAndJobs checks the batched inserts against
+// the real schema: chunks land in section order with DB defaults filled in,
+// each gets exactly one pending job, and the published IDs are those jobs.
+func TestIntegration_CreateBatchesChunksAndJobs(t *testing.T) {
+	pool := integrationPool(t)
+	svc, pub := newIntegrationService(t, pool)
+	ctx := context.Background()
+	name := uniqueName(t)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `delete from patterns where name = $1`, name)
+	})
+
+	content := integrationContent + "\n\n[//]: pattern\n## Limits\nNone."
+	created, err := svc.Create(ctx, patternsvc.CreateInput{Name: name, Content: content})
+	require.NoError(t, err)
+
+	rows, err := pool.Query(ctx, `
+		select c.chunk_index, c.section_title, c.enrichment_status, j.id, j.status, j.attempts, j.max_attempts
+		  from pattern_chunks c
+		  join enrichment_jobs j on j.chunk_id = c.id
+		 where c.pattern_id = $1
+		 order by c.chunk_index`, created.ID)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var titles []string
+	var jobIDs []uuid.UUID
+	for rows.Next() {
+		var idx, attempts, maxAttempts int
+		var title, chunkStatus, jobStatus string
+		var jobID uuid.UUID
+		require.NoError(t, rows.Scan(&idx, &title, &chunkStatus, &jobID, &jobStatus, &attempts, &maxAttempts))
+		assert.Equal(t, len(titles), idx)
+		assert.Equal(t, "pending", chunkStatus)
+		assert.Equal(t, "pending", jobStatus)
+		assert.Zero(t, attempts)
+		assert.Equal(t, enrichmentrepo.DefaultMaxAttempts, maxAttempts)
+		titles = append(titles, title)
+		jobIDs = append(jobIDs, jobID)
+	}
+	require.NoError(t, rows.Err())
+
+	assert.Equal(t, []string{"Philosophy", "Usage", "Limits"}, titles)
+	assert.Equal(t, jobIDs, pub.published, "published job IDs are the committed rows, in chunk order")
+
+	summaries, err := svc.ListChunks(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, summaries, 3)
+	for _, c := range summaries {
+		assert.Empty(t, c.Content, "summaries never load content")
+	}
+}
+
 func ptr[T any](v T) *T { return &v }

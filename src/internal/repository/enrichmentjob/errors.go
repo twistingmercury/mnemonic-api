@@ -2,11 +2,8 @@ package enrichmentjob
 
 import "errors"
 
-// Errors returned by Create.
+// Errors returned by CreatePendingForChunks.
 var (
-	// ErrPatternNotFound is returned when the referenced pattern does not exist.
-	ErrPatternNotFound = errors.New("pattern not found")
-
 	// ErrJobAlreadyPending is returned when a pending enrichment job already exists for this pattern.
 	ErrJobAlreadyPending = errors.New("enrichment job already pending for this pattern")
 

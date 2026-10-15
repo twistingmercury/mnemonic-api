@@ -12,18 +12,17 @@ import (
 // Repository defines the knowledge-graph operations the API needs. Writing
 // concepts and RELATED_TO edges is the enricher's job.
 type Repository interface {
-	// DeletePattern removes a Pattern node and all its relationships from the graph.
+	// DeletePattern removes a Pattern node and all its relationships from the
+	// graph, along with any of its concepts that no other pattern mentions.
 	DeletePattern(ctx context.Context, patternID uuid.UUID) error
 
-	// GetPatternConcepts returns all concepts linked to a pattern via MENTIONED_IN relationships.
-	GetPatternConcepts(ctx context.Context, patternID uuid.UUID) ([]Concept, error)
+	// GetPatternGraph returns up to relatedLimit related patterns and all
+	// concepts for a pattern, using a single session and read transaction.
+	GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (*PatternGraph, error)
 
 	// FindRelatedPatterns finds patterns related to the given pattern using pre-computed RELATED_TO edges.
 	// Results include similarity scores and shared concept names.
 	FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPattern, error)
-
-	// CleanupOrphanedConcepts removes concept nodes with no MENTIONED_IN relationships.
-	CleanupOrphanedConcepts(ctx context.Context) (int64, error)
 }
 
 // neo4jRepository is a Neo4j implementation of Repository.
@@ -53,14 +52,25 @@ func (r *neo4jRepository) query(ctx context.Context, write bool, cypher string, 
 	return res.Records, nil
 }
 
-// DeletePattern removes a Pattern node and all its relationships from the graph.
+// DeletePattern removes a Pattern node and all its relationships from the
+// graph, along with any of its concepts that no other pattern mentions.
 func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID) error {
 	if patternID == uuid.Nil {
 		return errNilPatternID
 	}
 
 	_, err := r.query(ctx, true,
-		"MATCH (p:Pattern {id: $patternId}) DETACH DELETE p",
+		// Collect the pattern's concepts before detaching it, then drop only
+		// those no other pattern mentions. This replaces a graph-wide orphan
+		// sweep with work proportional to one pattern.
+		`MATCH (p:Pattern {id: $patternId})
+		 OPTIONAL MATCH (c:Concept)-[:MENTIONED_IN]->(p)
+		 WITH p, collect(c) AS concepts
+		 DETACH DELETE p
+		 WITH concepts
+		 UNWIND concepts AS c
+		 WITH c WHERE NOT (c)-[:MENTIONED_IN]->()
+		 DELETE c`,
 		map[string]any{"patternId": patternID.String()},
 	)
 	if err != nil {
@@ -69,35 +79,89 @@ func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID
 	return nil
 }
 
-// GetPatternConcepts returns all concepts linked to a pattern via MENTIONED_IN relationships.
-func (r *neo4jRepository) GetPatternConcepts(ctx context.Context, patternID uuid.UUID) ([]Concept, error) {
+const conceptsCypher = `MATCH (c:Concept)-[:MENTIONED_IN]->(p:Pattern {id: $patternId})
+	 RETURN c.name AS name, c.type AS type
+	 ORDER BY c.name`
+
+const relatedCypher = `MATCH (p1:Pattern {id: $patternId})-[r:RELATED_TO]-(p2:Pattern)
+	 WITH p1, p2, r.similarity AS similarity
+	 OPTIONAL MATCH (p1)<-[:MENTIONED_IN]-(c:Concept)-[:MENTIONED_IN]->(p2)
+	 WITH p2, similarity, collect(c.name) AS conceptNames, count(c) AS sharedConcepts
+	 ORDER BY similarity DESC
+	 LIMIT $limit
+	 RETURN p2.id AS id, p2.name AS name, sharedConcepts, similarity, conceptNames`
+
+// GetPatternGraph runs the related-patterns and concepts queries in one
+// session and read transaction, instead of a session per query.
+func (r *neo4jRepository) GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (_ *PatternGraph, err error) {
 	if patternID == uuid.Nil {
 		return nil, errNilPatternID
 	}
 
-	records, err := r.query(ctx, false,
-		`MATCH (c:Concept)-[:MENTIONED_IN]->(p:Pattern {id: $patternId})
-		 RETURN c.name AS name, c.type AS type
-		 ORDER BY c.name`,
-		map[string]any{"patternId": patternID.String()},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("getting concepts for pattern %s: %w", patternID, err)
-	}
+	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: r.database, AccessMode: neo4j.AccessModeRead})
+	defer func() {
+		if closeErr := session.Close(ctx); closeErr != nil && err == nil {
+			err = fmt.Errorf("closing session: %w", closeErr)
+		}
+	}()
 
-	concepts := make([]Concept, 0, len(records))
-	for _, rec := range records {
-		name, _, err := neo4j.GetRecordValue[string](rec, "name")
+	graph, err := neo4j.ExecuteRead(ctx, session, func(tx neo4j.ManagedTransaction) (*PatternGraph, error) {
+		params := map[string]any{"patternId": patternID.String(), "limit": relatedLimit}
+
+		res, err := tx.Run(ctx, relatedCypher, params)
 		if err != nil {
-			return nil, fmt.Errorf("getting concepts for pattern %s: %w", patternID, err)
+			return nil, err
 		}
-		typ, _, err := neo4j.GetRecordValue[string](rec, "type")
+		relatedRecs, err := res.Collect(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("getting concepts for pattern %s: %w", patternID, err)
+			return nil, err
 		}
-		concepts = append(concepts, Concept{Name: name, Type: typ})
+
+		res, err = tx.Run(ctx, conceptsCypher, params)
+		if err != nil {
+			return nil, err
+		}
+		conceptRecs, err := res.Collect(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		g := &PatternGraph{
+			RelatedPatterns: make([]RelatedPattern, 0, len(relatedRecs)),
+			Concepts:        make([]Concept, 0, len(conceptRecs)),
+		}
+		for _, rec := range relatedRecs {
+			rp, err := toRelatedPattern(rec)
+			if err != nil {
+				return nil, err
+			}
+			g.RelatedPatterns = append(g.RelatedPatterns, rp)
+		}
+		for _, rec := range conceptRecs {
+			c, err := toConcept(rec)
+			if err != nil {
+				return nil, err
+			}
+			g.Concepts = append(g.Concepts, c)
+		}
+		return g, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting graph for pattern %s: %w", patternID, err)
 	}
-	return concepts, nil
+	return graph, nil
+}
+
+func toConcept(rec *neo4j.Record) (Concept, error) {
+	name, _, err := neo4j.GetRecordValue[string](rec, "name")
+	if err != nil {
+		return Concept{}, err
+	}
+	typ, _, err := neo4j.GetRecordValue[string](rec, "type")
+	if err != nil {
+		return Concept{}, err
+	}
+	return Concept{Name: name, Type: typ}, nil
 }
 
 // FindRelatedPatterns finds patterns related to the given pattern using pre-computed RELATED_TO edges.
@@ -107,14 +171,7 @@ func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uui
 		return nil, errNilPatternID
 	}
 
-	records, err := r.query(ctx, false,
-		`MATCH (p1:Pattern {id: $patternId})-[r:RELATED_TO]-(p2:Pattern)
-		 WITH p1, p2, r.similarity AS similarity
-		 OPTIONAL MATCH (p1)<-[:MENTIONED_IN]-(c:Concept)-[:MENTIONED_IN]->(p2)
-		 WITH p2, similarity, collect(c.name) AS conceptNames, count(c) AS sharedConcepts
-		 ORDER BY similarity DESC
-		 LIMIT $limit
-		 RETURN p2.id AS id, p2.name AS name, sharedConcepts, similarity, conceptNames`,
+	records, err := r.query(ctx, false, relatedCypher,
 		map[string]any{"patternId": patternID.String(), "limit": limit},
 	)
 	if err != nil {
@@ -173,26 +230,4 @@ func toRelatedPattern(rec *neo4j.Record) (RelatedPattern, error) {
 		Similarity:     similarity,
 		ConceptNames:   names,
 	}, nil
-}
-
-// CleanupOrphanedConcepts removes concept nodes with no MENTIONED_IN relationships.
-func (r *neo4jRepository) CleanupOrphanedConcepts(ctx context.Context) (int64, error) {
-	records, err := r.query(ctx, true,
-		`MATCH (c:Concept)
-		 WHERE NOT (c)-[:MENTIONED_IN]->()
-		 DELETE c
-		 RETURN count(c) AS deletedCount`,
-		nil,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("cleaning up orphaned concepts: %w", err)
-	}
-	if len(records) != 1 {
-		return 0, fmt.Errorf("cleaning up orphaned concepts: expected 1 record, got %d", len(records))
-	}
-	deleted, _, err := neo4j.GetRecordValue[int64](records[0], "deletedCount")
-	if err != nil {
-		return 0, fmt.Errorf("cleaning up orphaned concepts: %w", err)
-	}
-	return deleted, nil
 }

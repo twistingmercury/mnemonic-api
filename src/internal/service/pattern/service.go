@@ -51,9 +51,9 @@ type Service interface {
 	// knowledge graph. Returns service.ErrNotFound if the pattern does not exist.
 	FindRelated(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPatternResult, error)
 
-	// ListChunks retrieves all chunks for a pattern, ordered by chunk_index.
-	// Returns an empty slice when the pattern exists but has no chunks.
-	// Returns service.ErrNotFound if the pattern does not exist.
+	// ListChunks retrieves chunk summaries (no content) for a pattern, ordered
+	// by chunk_index. It returns an empty slice when the pattern has no chunks
+	// and does not check that the pattern exists.
 	ListChunks(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error)
 }
 
@@ -379,13 +379,9 @@ func (s *patternService) Delete(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("delete pattern: %w", err)
 	}
 
-	// Best-effort Neo4j cleanup.
+	// Best-effort Neo4j cleanup; DeletePattern also drops concepts left orphaned.
 	s.syncNeo4j("pattern:delete:"+id.String(), func() error {
 		return s.graphRepo.DeletePattern(ctx, id)
-	})
-	s.syncNeo4j("pattern:cleanup-orphans", func() error {
-		_, err := s.graphRepo.CleanupOrphanedConcepts(ctx)
-		return err
 	})
 
 	return nil
@@ -433,34 +429,25 @@ func (s *patternService) FindRelated(ctx context.Context, patternID uuid.UUID, l
 	return results, nil
 }
 
-// ListChunks retrieves all chunks for a pattern, ordered by chunk_index.
-// Returns service.ErrNotFound if the pattern does not exist.
+// ListChunks retrieves chunk summaries for a pattern, ordered by chunk_index.
+// It does not check that the pattern exists; callers that need a 404 already
+// load the pattern first, so a second lookup here would only repeat that read.
 func (s *patternService) ListChunks(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
-	if _, err := s.patternRepo.Get(ctx, patternID); err != nil {
-		if errors.Is(err, patternRepo.ErrNotFound) {
-			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
-		}
-		return nil, fmt.Errorf("list chunks: %w", err)
-	}
-
-	chunks, err := s.chunkRepo.ListByPatternID(ctx, patternID)
+	chunks, err := s.chunkRepo.ListSummariesByPatternID(ctx, patternID)
 	if err != nil {
 		return nil, fmt.Errorf("list chunks: %w", err)
 	}
 	return chunks, nil
 }
 
-// fetchGraphContext retrieves related patterns and concepts from Neo4j.
+// fetchGraphContext retrieves related patterns and concepts from Neo4j in a
+// single session.
 func (s *patternService) fetchGraphContext(ctx context.Context, patternID uuid.UUID) (*GraphContext, error) {
-	related, err := s.graphRepo.FindRelatedPatterns(ctx, patternID, 10)
+	graph, err := s.graphRepo.GetPatternGraph(ctx, patternID, 10)
 	if err != nil {
-		return nil, fmt.Errorf("fetching related patterns: %w", err)
+		return nil, fmt.Errorf("fetching graph context: %w", err)
 	}
-
-	concepts, err := s.graphRepo.GetPatternConcepts(ctx, patternID)
-	if err != nil {
-		return nil, fmt.Errorf("fetching concepts: %w", err)
-	}
+	related, concepts := graph.RelatedPatterns, graph.Concepts
 
 	relatedResults := make([]RelatedPatternResult, len(related))
 	for i, r := range related {
@@ -499,18 +486,17 @@ func (s *patternService) syncNeo4j(entityDesc string, fn func() error) {
 }
 
 // insertChunksAndJobs inserts the chunks for content and one pending job per
-// chunk, returning the job IDs. Publish them only after the caller commits: a
-// message sent inside the transaction can outlive a rollback, leaving the
-// enricher to claim a job row that no longer exists.
+// chunk, returning the job IDs. Each set is one statement, so this costs two
+// round trips however many chunks the content has. Publish the jobs only after
+// the caller commits: a message sent inside the transaction can outlive a
+// rollback, leaving the enricher to claim a job row that no longer exists.
 func (s *patternService) insertChunksAndJobs(ctx context.Context, tx repository.DBTX, patternID uuid.UUID, content string) ([]uuid.UUID, error) {
 	chunkRepo := s.chunkRepo.WithTx(tx)
 	jobRepo := s.enrichmentRepo.WithTx(tx)
 
 	rawChunks := splitIntoChunks(content)
-	var publishedJobs = make([]uuid.UUID, 0)
-
 	if len(rawChunks) == 0 {
-		return publishedJobs, nil
+		return []uuid.UUID{}, nil
 	}
 
 	chunks := make([]*chunkrepo.Chunk, len(rawChunks))
@@ -527,15 +513,15 @@ func (s *patternService) insertChunksAndJobs(ctx context.Context, tx repository.
 		return nil, fmt.Errorf("failed to create a chunk batch: %w", err)
 	}
 
-	for _, c := range chunks {
-		chunkID := c.ID
-		job := enrichRepo.Job{ChunkID: &chunkID}
-		if err := jobRepo.Create(ctx, &job); err != nil {
-			return nil, fmt.Errorf("failed to create enrichment job for patternID %v: %w", patternID, err)
-		}
-
-		publishedJobs = append(publishedJobs, job.ID)
+	chunkIDs := make([]uuid.UUID, len(chunks))
+	for i, c := range chunks {
+		chunkIDs[i] = c.ID
 	}
 
-	return publishedJobs, nil
+	jobIDs, err := jobRepo.CreatePendingForChunks(ctx, chunkIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create enrichment jobs for patternID %v: %w", patternID, err)
+	}
+
+	return jobIDs, nil
 }
