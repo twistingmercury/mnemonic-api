@@ -16,8 +16,6 @@ type MnemonicConfig struct {
 	Server        ServerConfig        `mapstructure:"server"`
 	Database      DatabaseConfig      `mapstructure:"database"`
 	OpenAI        OpenAIConfig        `mapstructure:"openai"`
-	RateLimit     RateLimitConfig     `mapstructure:"rate_limit"`
-	Enrichment    EnrichmentConfig    `mapstructure:"enrichment"`
 	Logging       LoggingConfig       `mapstructure:"logging"`
 	Observability ObservabilityConfig `mapstructure:"observability"`
 	Vocabulary    VocabularyConfig    `mapstructure:"vocabulary"`
@@ -80,20 +78,6 @@ type OpenAIConfig struct {
 	RetryDelay           time.Duration `mapstructure:"retry_delay"`
 }
 
-// RateLimitConfig contains rate limiting settings.
-type RateLimitConfig struct {
-	Enabled           bool             `mapstructure:"enabled"`
-	RequestsPerSecond int              `mapstructure:"requests_per_second"`
-	BurstSize         int              `mapstructure:"burst_size"`
-	PerUser           PerUserRateLimit `mapstructure:"per_user"`
-}
-
-// PerUserRateLimit contains per-user rate limiting settings.
-type PerUserRateLimit struct {
-	RequestsPerMinute int `mapstructure:"requests_per_minute"`
-	BurstSize         int `mapstructure:"burst_size"`
-}
-
 // QueueConfig contains message queue settings.
 type QueueConfig struct {
 	Provider string         `mapstructure:"provider"`
@@ -109,17 +93,6 @@ type RabbitMQConfig struct {
 	VHost          string        `mapstructure:"vhost"`
 	Queue          string        `mapstructure:"queue"`
 	ReconnectDelay time.Duration `mapstructure:"reconnect_delay"`
-}
-
-// EnrichmentConfig contains enrichment worker settings.
-type EnrichmentConfig struct {
-	MaxAttempts            int           `mapstructure:"max_attempts"`
-	RetryDelay             time.Duration `mapstructure:"retry_delay"`
-	JobTimeout             time.Duration `mapstructure:"job_timeout"`
-	DrainTimeout           time.Duration `mapstructure:"drain_timeout"`
-	CompletedRetention     time.Duration `mapstructure:"completed_retention"`
-	FailedRetention        time.Duration `mapstructure:"failed_retention"`
-	RelatedToMinSimilarity float64       `mapstructure:"related_to_min_similarity"`
 }
 
 // LoggingConfig contains logging settings.
@@ -285,22 +258,6 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("openai.retry_attempts", DefaultOpenAIRetryAttempts)
 	v.SetDefault("openai.retry_delay", DefaultOpenAIRetryDelay)
 
-	// Rate limit defaults
-	v.SetDefault("rate_limit.enabled", DefaultRateLimitEnabled)
-	v.SetDefault("rate_limit.requests_per_second", DefaultRateLimitRequestsPerSecond)
-	v.SetDefault("rate_limit.burst_size", DefaultRateLimitBurstSize)
-	v.SetDefault("rate_limit.per_user.requests_per_minute", DefaultRateLimitPerUserRPM)
-	v.SetDefault("rate_limit.per_user.burst_size", DefaultRateLimitPerUserBurst)
-
-	// Enrichment defaults
-	v.SetDefault("enrichment.max_attempts", DefaultEnrichmentMaxAttempts)
-	v.SetDefault("enrichment.retry_delay", DefaultEnrichmentRetryDelay)
-	v.SetDefault("enrichment.job_timeout", DefaultEnrichmentJobTimeout)
-	v.SetDefault("enrichment.drain_timeout", DefaultEnrichmentDrainTimeout)
-	v.SetDefault("enrichment.completed_retention", DefaultEnrichmentCompletedRetention)
-	v.SetDefault("enrichment.failed_retention", DefaultEnrichmentFailedRetention)
-	v.SetDefault("enrichment.related_to_min_similarity", DefaultEnrichmentRelatedToMinSimilarity)
-
 	// Logging defaults
 	v.SetDefault("logging.level", DefaultLoggingLevel)
 	v.SetDefault("logging.format", DefaultLoggingFormat)
@@ -371,12 +328,6 @@ func (c *MnemonicConfig) Validate() ValidationErrors {
 
 	// OpenAI validation
 	errs = append(errs, c.OpenAI.validate()...)
-
-	// Rate limit validation
-	errs = append(errs, c.RateLimit.validate()...)
-
-	// Enrichment validation
-	errs = append(errs, c.Enrichment.validate()...)
 
 	// Logging validation
 	errs = append(errs, c.Logging.validate()...)
@@ -552,97 +503,6 @@ func (c *OpenAIConfig) validate() ValidationErrors {
 		errs = append(errs, ValidationError{
 			Field:   "openai.retry_delay",
 			Message: "must be non-negative",
-		})
-	}
-
-	return errs
-}
-
-func (c *RateLimitConfig) validate() ValidationErrors {
-	var errs ValidationErrors
-
-	if c.Enabled {
-		if c.RequestsPerSecond < 1 {
-			errs = append(errs, ValidationError{
-				Field:   "rate_limit.requests_per_second",
-				Message: "must be at least 1 when rate limiting is enabled",
-			})
-		}
-
-		if c.BurstSize < 1 {
-			errs = append(errs, ValidationError{
-				Field:   "rate_limit.burst_size",
-				Message: "must be at least 1 when rate limiting is enabled",
-			})
-		}
-
-		if c.PerUser.RequestsPerMinute < 1 {
-			errs = append(errs, ValidationError{
-				Field:   "rate_limit.per_user.requests_per_minute",
-				Message: "must be at least 1 when rate limiting is enabled",
-			})
-		}
-
-		if c.PerUser.BurstSize < 1 {
-			errs = append(errs, ValidationError{
-				Field:   "rate_limit.per_user.burst_size",
-				Message: "must be at least 1 when rate limiting is enabled",
-			})
-		}
-	}
-
-	return errs
-}
-
-func (c *EnrichmentConfig) validate() ValidationErrors {
-	var errs ValidationErrors
-
-	if c.MaxAttempts < 1 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.max_attempts",
-			Message: "must be at least 1",
-		})
-	}
-
-	if c.RetryDelay < 0 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.retry_delay",
-			Message: "must be non-negative",
-		})
-	}
-
-	if c.JobTimeout <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.job_timeout",
-			Message: "must be a positive duration",
-		})
-	}
-
-	if c.DrainTimeout <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.drain_timeout",
-			Message: "must be a positive duration",
-		})
-	}
-
-	if c.CompletedRetention <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.completed_retention",
-			Message: "must be a positive duration",
-		})
-	}
-
-	if c.FailedRetention <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.failed_retention",
-			Message: "must be a positive duration",
-		})
-	}
-
-	if c.RelatedToMinSimilarity < 0 || c.RelatedToMinSimilarity > 1 {
-		errs = append(errs, ValidationError{
-			Field:   "enrichment.related_to_min_similarity",
-			Message: fmt.Sprintf("must be between 0 and 1, got %f", c.RelatedToMinSimilarity),
 		})
 	}
 

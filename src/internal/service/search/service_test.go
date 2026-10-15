@@ -66,30 +66,12 @@ func (m *mockChunkRepo) DeleteByPatternID(ctx context.Context, patternID uuid.UU
 	return m.Called(ctx, patternID).Error(0)
 }
 
-func (m *mockChunkRepo) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
-	return m.Called(ctx, id, embedding).Error(0)
-}
-
-func (m *mockChunkRepo) UpdateEnrichmentStatus(ctx context.Context, id uuid.UUID, status string, errMsg *string) error {
-	return m.Called(ctx, id, status, errMsg).Error(0)
-}
-
 func (m *mockChunkRepo) FindSimilar(ctx context.Context, embedding []float32, opts chunkrepo.SimilarityOptions) ([]*chunkrepo.Match, error) {
 	args := m.Called(ctx, embedding, opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*chunkrepo.Match), args.Error(1)
-}
-
-func (m *mockChunkRepo) AllEnrichedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error) {
-	args := m.Called(ctx, patternID)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *mockChunkRepo) AnyFailedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error) {
-	args := m.Called(ctx, patternID)
-	return args.Bool(0), args.Error(1)
 }
 
 func (m *mockChunkRepo) WithTx(_ repository.DBTX) chunkrepo.Repository {

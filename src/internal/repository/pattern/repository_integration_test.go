@@ -190,34 +190,6 @@ func TestIntegration_Get(t *testing.T) {
 	})
 }
 
-func TestIntegration_GetByName(t *testing.T) {
-	pool := setupTestDB(t)
-	cleanupTestPatterns(t, pool)
-	t.Cleanup(func() { cleanupTestPatterns(t, pool) })
-
-	repo := pattern.NewRepository(pool)
-	ctx := context.Background()
-
-	// Create a test pattern first
-	testPattern := testIntegrationPattern("getbyname-test")
-	require.NoError(t, repo.Create(ctx, testPattern))
-
-	t.Run("retrieves existing pattern by name", func(t *testing.T) {
-		retrieved, err := repo.GetByName(ctx, testPattern.Name)
-
-		require.NoError(t, err)
-		assert.Equal(t, testPattern.ID, retrieved.ID)
-		assert.Equal(t, testPattern.Name, retrieved.Name)
-	})
-
-	t.Run("returns ErrNotFound for nonexistent name", func(t *testing.T) {
-		retrieved, err := repo.GetByName(ctx, testPatternPrefix+"nonexistent")
-
-		assert.ErrorIs(t, err, pattern.ErrNotFound)
-		assert.Nil(t, retrieved)
-	})
-}
-
 func TestIntegration_Update(t *testing.T) {
 	pool := setupTestDB(t)
 	cleanupTestPatterns(t, pool)
@@ -404,55 +376,6 @@ func TestIntegration_List(t *testing.T) {
 	})
 }
 
-func TestIntegration_UpdateEnrichmentStatus(t *testing.T) {
-	pool := setupTestDB(t)
-	cleanupTestPatterns(t, pool)
-	t.Cleanup(func() { cleanupTestPatterns(t, pool) })
-
-	repo := pattern.NewRepository(pool)
-	ctx := context.Background()
-
-	t.Run("transitions from pending to enriched", func(t *testing.T) {
-		testPattern := testIntegrationPattern("status-enriched")
-		require.NoError(t, repo.Create(ctx, testPattern))
-		assert.Equal(t, "pending", testPattern.EnrichmentStatus)
-
-		// Update to enriched
-		err := repo.UpdateEnrichmentStatus(ctx, testPattern.ID, "enriched", nil)
-		require.NoError(t, err)
-
-		// Verify
-		retrieved, err := repo.Get(ctx, testPattern.ID)
-		require.NoError(t, err)
-		assert.Equal(t, "enriched", retrieved.EnrichmentStatus)
-		assert.NotNil(t, retrieved.EnrichedAt, "EnrichedAt should be set")
-		assert.Nil(t, retrieved.EnrichmentError)
-	})
-
-	t.Run("transitions from pending to failed with error message", func(t *testing.T) {
-		testPattern := testIntegrationPattern("status-failed")
-		require.NoError(t, repo.Create(ctx, testPattern))
-
-		// Update to failed
-		errMsg := "embedding service unavailable"
-		err := repo.UpdateEnrichmentStatus(ctx, testPattern.ID, "failed", &errMsg)
-		require.NoError(t, err)
-
-		// Verify
-		retrieved, err := repo.Get(ctx, testPattern.ID)
-		require.NoError(t, err)
-		assert.Equal(t, "failed", retrieved.EnrichmentStatus)
-		assert.Nil(t, retrieved.EnrichedAt, "EnrichedAt should not be set for failed")
-		require.NotNil(t, retrieved.EnrichmentError)
-		assert.Equal(t, errMsg, *retrieved.EnrichmentError)
-	})
-
-	t.Run("returns ErrNotFound for nonexistent pattern", func(t *testing.T) {
-		err := repo.UpdateEnrichmentStatus(ctx, uuid.New(), "enriched", nil)
-		assert.ErrorIs(t, err, pattern.ErrNotFound)
-	})
-}
-
 func TestIntegration_Exists(t *testing.T) {
 	pool := setupTestDB(t)
 	cleanupTestPatterns(t, pool)
@@ -630,12 +553,12 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 		assert.Empty(t, createErrors, "all concurrent creates should succeed")
 
 		// Verify all were created
-		for i := 0; i < numPatterns; i++ {
-			name := fmt.Sprintf("%sconcurrent-%d", testPatternPrefix, i)
-			retrieved, err := repo.GetByName(ctx, name)
-			require.NoError(t, err)
-			assert.NotNil(t, retrieved, "pattern %s should exist", name)
-		}
+		var created int
+		err := pool.QueryRow(ctx,
+			"SELECT count(*) FROM patterns WHERE name LIKE $1",
+			testPatternPrefix+"concurrent-%").Scan(&created)
+		require.NoError(t, err)
+		assert.Equal(t, numPatterns, created)
 	})
 
 	t.Run("handles concurrent updates", func(t *testing.T) {
@@ -690,14 +613,14 @@ func TestIntegration_ListWithEnrichmentStatusFilter(t *testing.T) {
 
 	enrichedPattern := testIntegrationPattern("status-filter-enriched")
 	require.NoError(t, repo.Create(ctx, enrichedPattern))
-	// Embeddings live on chunks, not patterns; the status column alone is what
-	// List filters on here.
-	require.NoError(t, repo.UpdateEnrichmentStatus(ctx, enrichedPattern.ID, "enriched", nil))
+	// The enricher owns status transitions; set the column directly since it
+	// is all List filters on here.
+	setEnrichmentStatus(t, pool, enrichedPattern.ID, "enriched", nil)
 
 	failedPattern := testIntegrationPattern("status-filter-failed")
 	require.NoError(t, repo.Create(ctx, failedPattern))
 	errMsg := "test error"
-	require.NoError(t, repo.UpdateEnrichmentStatus(ctx, failedPattern.ID, "failed", &errMsg))
+	setEnrichmentStatus(t, pool, failedPattern.ID, "failed", &errMsg)
 
 	t.Run("filters by pending status", func(t *testing.T) {
 		result, _, err := repo.List(ctx, pattern.Filter{
@@ -749,4 +672,14 @@ func TestIntegration_ListWithEnrichmentStatusFilter(t *testing.T) {
 		}
 		assert.True(t, found, "failed pattern should be in results")
 	})
+}
+
+// setEnrichmentStatus writes a pattern's enrichment status directly, standing
+// in for the enricher.
+func setEnrichmentStatus(t *testing.T, pool *pgxpool.Pool, id uuid.UUID, status string, errMsg *string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		"UPDATE patterns SET enrichment_status = $2, enrichment_error = $3 WHERE id = $1",
+		id, status, errMsg)
+	require.NoError(t, err)
 }

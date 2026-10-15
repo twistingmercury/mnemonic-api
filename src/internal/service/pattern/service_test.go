@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -56,14 +55,6 @@ func (m *mockPatternRepo) Get(ctx context.Context, id uuid.UUID) (*patternrepo.P
 	return args.Get(0).(*patternrepo.Pattern), args.Error(1)
 }
 
-func (m *mockPatternRepo) GetByName(ctx context.Context, name string) (*patternrepo.Pattern, error) {
-	args := m.Called(ctx, name)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*patternrepo.Pattern), args.Error(1)
-}
-
 func (m *mockPatternRepo) Update(ctx context.Context, pattern *patternrepo.Pattern) error {
 	args := m.Called(ctx, pattern)
 	return args.Error(0)
@@ -80,16 +71,6 @@ func (m *mockPatternRepo) List(ctx context.Context, filter patternrepo.Filter, o
 		return nil, args.Get(1).(int64), args.Error(2)
 	}
 	return args.Get(0).([]*patternrepo.Pattern), args.Get(1).(int64), args.Error(2)
-}
-
-func (m *mockPatternRepo) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
-	args := m.Called(ctx, id, embedding)
-	return args.Error(0)
-}
-
-func (m *mockPatternRepo) UpdateEnrichmentStatus(ctx context.Context, id uuid.UUID, status string, errMsg *string) error {
-	args := m.Called(ctx, id, status, errMsg)
-	return args.Error(0)
 }
 
 func (m *mockPatternRepo) FindSimilar(ctx context.Context, embedding []float32, opts patternrepo.SimilarityOptions) ([]*patternrepo.Match, error) {
@@ -116,11 +97,6 @@ type mockEnrichmentRepo struct {
 	txRepo *mockEnrichmentRepo
 }
 
-func (m *mockEnrichmentRepo) Create(ctx context.Context, job *enrichmentrepo.Job) error {
-	args := m.Called(ctx, job)
-	return args.Error(0)
-}
-
 func (m *mockEnrichmentRepo) CreatePendingForChunks(ctx context.Context, chunkIDs []uuid.UUID) ([]uuid.UUID, error) {
 	args := m.Called(ctx, chunkIDs)
 	if args.Get(0) == nil {
@@ -128,70 +104,6 @@ func (m *mockEnrichmentRepo) CreatePendingForChunks(ctx context.Context, chunkID
 	}
 	return args.Get(0).([]uuid.UUID), args.Error(1)
 }
-
-func (m *mockEnrichmentRepo) Get(ctx context.Context, id uuid.UUID) (*enrichmentrepo.Job, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*enrichmentrepo.Job), args.Error(1)
-}
-
-func (m *mockEnrichmentRepo) GetByPatternID(ctx context.Context, patternID uuid.UUID) (*enrichmentrepo.Job, error) {
-	args := m.Called(ctx, patternID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*enrichmentrepo.Job), args.Error(1)
-}
-
-func (m *mockEnrichmentRepo) ClaimPending(ctx context.Context) (*enrichmentrepo.Job, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*enrichmentrepo.Job), args.Error(1)
-}
-
-func (m *mockEnrichmentRepo) MarkProcessing(ctx context.Context, id uuid.UUID) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
-}
-
-func (m *mockEnrichmentRepo) MarkCompleted(ctx context.Context, id uuid.UUID) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
-}
-
-func (m *mockEnrichmentRepo) MarkFailed(ctx context.Context, id uuid.UUID, err error, retryDelay time.Duration) error {
-	args := m.Called(ctx, id, err, retryDelay)
-	return args.Error(0)
-}
-
-func (m *mockEnrichmentRepo) ReclaimStale(ctx context.Context, timeout time.Duration) (int64, error) {
-	args := m.Called(ctx, timeout)
-	return args.Get(0).(int64), args.Error(1)
-}
-
-func (m *mockEnrichmentRepo) List(ctx context.Context, filter enrichmentrepo.Filter, opts repository.ListOptions) ([]*enrichmentrepo.Job, int64, error) {
-	args := m.Called(ctx, filter, opts)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]*enrichmentrepo.Job), args.Get(1).(int64), args.Error(2)
-}
-
-func (m *mockEnrichmentRepo) DeleteCompleted(ctx context.Context, retention time.Duration) (int64, error) {
-	args := m.Called(ctx, retention)
-	return args.Get(0).(int64), args.Error(1)
-}
-
-func (m *mockEnrichmentRepo) DeleteFailed(ctx context.Context, retention time.Duration) (int64, error) {
-	args := m.Called(ctx, retention)
-	return args.Get(0).(int64), args.Error(1)
-}
-
-// ---------- Mock: graphrepo.Repository ----------
 
 func (m *mockEnrichmentRepo) WithTx(_ repository.DBTX) enrichmentrepo.Repository {
 	return m.tx()
@@ -205,36 +117,15 @@ func (m *mockEnrichmentRepo) tx() *mockEnrichmentRepo {
 	return m.txRepo
 }
 
+// ---------- Mock: graphrepo.Repository ----------
+
 type mockGraphRepo struct {
 	mock.Mock
-}
-
-func (m *mockGraphRepo) SyncPattern(ctx context.Context, pattern *graphrepo.Pattern) error {
-	args := m.Called(ctx, pattern)
-	return args.Error(0)
 }
 
 func (m *mockGraphRepo) DeletePattern(ctx context.Context, patternID uuid.UUID) error {
 	args := m.Called(ctx, patternID)
 	return args.Error(0)
-}
-
-func (m *mockGraphRepo) SyncConcepts(ctx context.Context, patternID uuid.UUID, concepts []graphrepo.Concept) error {
-	args := m.Called(ctx, patternID, concepts)
-	return args.Error(0)
-}
-
-func (m *mockGraphRepo) ComputeRelatedToEdges(ctx context.Context, patternID uuid.UUID, minSimilarity float64) error {
-	args := m.Called(ctx, patternID, minSimilarity)
-	return args.Error(0)
-}
-
-func (m *mockGraphRepo) GetPatternConcepts(ctx context.Context, patternID uuid.UUID) ([]graphrepo.Concept, error) {
-	args := m.Called(ctx, patternID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]graphrepo.Concept), args.Error(1)
 }
 
 func (m *mockGraphRepo) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]graphrepo.RelatedPattern, error) {
@@ -251,11 +142,6 @@ func (m *mockGraphRepo) GetPatternGraph(ctx context.Context, patternID uuid.UUID
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*graphrepo.PatternGraph), args.Error(1)
-}
-
-func (m *mockGraphRepo) HealthCheck(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
 }
 
 // ---------- Mock: repository.TxBeginner ----------
@@ -337,11 +223,6 @@ type mockChunkRepo struct {
 	txRepo *mockChunkRepo
 }
 
-func (m *mockChunkRepo) Create(ctx context.Context, c *chunkrepo.Chunk) error {
-	args := m.Called(ctx, c)
-	return args.Error(0)
-}
-
 func (m *mockChunkRepo) CreateBatch(ctx context.Context, chunks []*chunkrepo.Chunk) error {
 	args := m.Called(ctx, chunks)
 	// Assign IDs to chunks so that enrichment job creation can use them.
@@ -353,14 +234,6 @@ func (m *mockChunkRepo) CreateBatch(ctx context.Context, chunks []*chunkrepo.Chu
 		}
 	}
 	return args.Error(0)
-}
-
-func (m *mockChunkRepo) Get(ctx context.Context, id uuid.UUID) (*chunkrepo.Chunk, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*chunkrepo.Chunk), args.Error(1)
 }
 
 func (m *mockChunkRepo) ListSummariesByPatternID(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
@@ -376,32 +249,12 @@ func (m *mockChunkRepo) DeleteByPatternID(ctx context.Context, patternID uuid.UU
 	return args.Error(0)
 }
 
-func (m *mockChunkRepo) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
-	args := m.Called(ctx, id, embedding)
-	return args.Error(0)
-}
-
-func (m *mockChunkRepo) UpdateEnrichmentStatus(ctx context.Context, id uuid.UUID, status string, errMsg *string) error {
-	args := m.Called(ctx, id, status, errMsg)
-	return args.Error(0)
-}
-
 func (m *mockChunkRepo) FindSimilar(ctx context.Context, embedding []float32, opts chunkrepo.SimilarityOptions) ([]*chunkrepo.Match, error) {
 	args := m.Called(ctx, embedding, opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*chunkrepo.Match), args.Error(1)
-}
-
-func (m *mockChunkRepo) AllEnrichedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error) {
-	args := m.Called(ctx, patternID)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *mockChunkRepo) AnyFailedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error) {
-	args := m.Called(ctx, patternID)
-	return args.Bool(0), args.Error(1)
 }
 
 func (m *mockChunkRepo) WithTx(_ repository.DBTX) chunkrepo.Repository {

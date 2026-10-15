@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `rate_limit.*` and `enrichment.*` configuration. The API never read either block: it has no rate limiter, and enrichment runs in mnemonic-enricher, which has its own settings. Setting these keys no longer has any effect, and invalid values no longer stop startup.
+- Repository methods the API never calls: the enrichment-job lifecycle (claim, mark, reclaim, list, purge), chunk and pattern single-row reads and status updates, and graph writes (`SyncPattern`, `SyncConcepts`, `ComputeRelatedToEdges`, `HealthCheck`). These belong to the enricher.
+- The Neo4j session, transaction and result adapter interfaces in the graph repository. Each query now runs through `neo4j.ExecuteQuery`, which keeps the driver's retry behavior.
 - In-process TLS support and `server.tls.*` configuration. TLS terminates at the reverse proxy and the API serves plain HTTP behind it, which is what the Docker health probe already assumed.
 
 ### Fixed
