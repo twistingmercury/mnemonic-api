@@ -142,3 +142,45 @@ func TestPublish_ReconnectFailureAndCancellation(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
+
+// closable reports a fixed IsClosed result, like amqp.Connection and amqp.Channel.
+type closable struct{ closed bool }
+
+func (c closable) IsClosed() bool { return c.closed }
+
+type closableConn struct {
+	nopCloser
+	closable
+}
+
+type closableChannel struct {
+	fakeChannel
+	closable
+}
+
+func TestPublisherConnected(t *testing.T) {
+	t.Parallel()
+
+	newPublisher := func(conn io.Closer, ch rabbitmq.Channel) *rabbitmq.Publisher {
+		p := rabbitmq.NewTestPublisher(rabbitmq.PublisherConfig{Queue: "q"}, failuresCounter(t), ch, nil)
+		p.SetConnForTest(conn)
+		return p
+	}
+
+	tests := []struct {
+		name               string
+		connDown, chanDown bool
+		want               bool
+	}{
+		{"both open", false, false, true},
+		{"connection closed", true, false, false},
+		{"channel closed", false, true, false},
+	}
+	for _, tt := range tests {
+		p := newPublisher(closableConn{closable: closable{tt.connDown}}, &closableChannel{closable: closable{tt.chanDown}})
+		assert.Equal(t, tt.want, p.Connected(), tt.name)
+	}
+
+	assert.False(t, newPublisher(nopCloser{}, &fakeChannel{}).Connected(),
+		"connections that cannot report their state count as disconnected")
+}

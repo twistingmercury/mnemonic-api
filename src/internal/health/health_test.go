@@ -220,3 +220,38 @@ func TestCheckHealth_BothUnhealthy(t *testing.T) {
 	assert.Contains(t, err.Error(), "PostgreSQL")
 	assert.Contains(t, err.Error(), "Neo4j")
 }
+
+// --- RabbitMQ check tests ---
+
+type mockQueue struct{ connected bool }
+
+func (m *mockQueue) Connected() bool { return m.connected }
+
+func TestInitialize_WithQueue(t *testing.T) {
+	t.Cleanup(health.ResetForTest)
+
+	tests := []struct {
+		name      string
+		connected bool
+		want      heartbeat.Status
+	}{
+		{"connected", true, heartbeat.StatusOK},
+		{"disconnected is a warning", false, heartbeat.StatusWarning},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, health.Initialize(health.Dependencies{
+				PGPool:      &mockPinger{},
+				Neo4jDriver: &mockConnVerifier{},
+				Queue:       &mockQueue{connected: tt.connected},
+			}))
+
+			descs := health.Descriptors()
+			require.Len(t, descs, 4)
+			assert.Equal(t, "RabbitMQ", descs[3].Name)
+			assert.Equal(t, "queue", descs[3].Type)
+			assert.Equal(t, tt.want, descs[3].CheckFunc(context.Background()).Status)
+			assert.NoError(t, health.CheckHealth(), "a disconnected queue never fails the probe")
+		})
+	}
+}

@@ -31,11 +31,18 @@ type ConnectivityVerifier interface {
 	VerifyConnectivity(ctx context.Context) error
 }
 
+// QueueConnection is satisfied by *rabbitmq.Publisher.
+type QueueConnection interface {
+	Connected() bool
+}
+
 // Dependencies holds the external connections that health checks probe.
+// Queue is optional; without it no RabbitMQ check is registered.
 type Dependencies struct {
 	PGPool      Pinger
 	Neo4jDriver ConnectivityVerifier
 	OpenAI      config.OpenAIConfig
+	Queue       QueueConnection
 }
 
 var (
@@ -77,6 +84,15 @@ func Initialize(deps Dependencies) error {
 			Timeout:   checkTimeout,
 			CheckFunc: openAIModelCheck(openAIBaseURL, deps.OpenAI.APIKey, deps.OpenAI.EmbeddingModel),
 		},
+	}
+
+	if deps.Queue != nil {
+		descriptors = append(descriptors, heartbeat.DependencyDescriptor{
+			Name:      "RabbitMQ",
+			Type:      "queue",
+			Timeout:   checkTimeout,
+			CheckFunc: queueCheck(deps.Queue),
+		})
 	}
 
 	return nil
@@ -145,6 +161,22 @@ func checkNeo4jHealth(ctx context.Context) (status heartbeat.StatusResult) {
 	status.Status = heartbeat.StatusOK
 	status.Message = "ok"
 	return status
+}
+
+// queueCheck returns a check that reports whether the enrichment job
+// publisher is connected. A disconnected queue is a Warning: patterns are
+// still written and their job rows stay pending until they are published.
+func queueCheck(q QueueConnection) heartbeat.CheckFunc {
+	return func(_ context.Context) (status heartbeat.StatusResult) {
+		if !q.Connected() {
+			status.Status = heartbeat.StatusWarning
+			status.Message = "publisher disconnected; reconnects on the next publish"
+			return status
+		}
+		status.Status = heartbeat.StatusOK
+		status.Message = "ok"
+		return status
+	}
 }
 
 // openAIModelCheck returns a check that retrieves model from the OpenAI models
