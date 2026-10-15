@@ -42,11 +42,13 @@ func TestInitialize_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	descs := health.Descriptors()
-	require.Len(t, descs, 2)
+	require.Len(t, descs, 3)
 	assert.Equal(t, "PostgreSQL", descs[0].Name)
 	assert.Equal(t, "database", descs[0].Type)
 	assert.Equal(t, "Neo4j", descs[1].Name)
 	assert.Equal(t, "database", descs[1].Type)
+	assert.Equal(t, "OpenAI embedding model", descs[2].Name)
+	assert.Equal(t, "external_api", descs[2].Type)
 }
 
 func TestInitialize_NilPGPool(t *testing.T) {
