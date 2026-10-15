@@ -60,7 +60,7 @@ func setupNeo4j(t *testing.T) (neo4j.DriverWithContext, graph.Repository) {
 		_ = driver.Close(context.Background())
 	})
 
-	return driver, graph.NewRepository(driver, neo4jDatabase())
+	return driver, graph.NewRepository(driver, neo4jDatabase(), nil)
 }
 
 // cypher runs a statement directly against the test database.

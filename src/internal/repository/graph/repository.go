@@ -4,10 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/twistingmercury/mnemonic-api/internal/metrics"
 )
+
+var tracer = otel.Tracer("mnemonic/neo4j")
 
 // Repository defines the knowledge-graph operations the API needs. Writing
 // concepts and RELATED_TO edges is the enricher's job.
@@ -27,13 +36,40 @@ type Repository interface {
 
 // neo4jRepository is a Neo4j implementation of Repository.
 type neo4jRepository struct {
-	driver   neo4j.DriverWithContext
-	database string
+	driver    neo4j.DriverWithContext
+	database  string
+	dbMetrics *metrics.Database
 }
 
-// NewRepository creates a new Neo4j-backed Repository.
-func NewRepository(driver neo4j.DriverWithContext, database string) Repository {
-	return &neo4jRepository{driver: driver, database: database}
+// NewRepository creates a new Neo4j-backed Repository. Each operation gets a
+// client span and, when dbMetrics is non-nil, a latency and error recording.
+func NewRepository(driver neo4j.DriverWithContext, database string, dbMetrics *metrics.Database) Repository {
+	return &neo4jRepository{driver: driver, database: database, dbMetrics: dbMetrics}
+}
+
+// instrument starts a client span for one Neo4j operation. The returned func
+// ends the span and records the operation's latency and outcome; defer it
+// before any session close so close errors are counted too.
+func (r *neo4jRepository) instrument(ctx context.Context, op string) (context.Context, func(error)) {
+	start := time.Now()
+	ctx, span := tracer.Start(ctx, "neo4j "+op,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("db.system.name", "neo4j"),
+			attribute.String("db.namespace", r.database),
+			attribute.String("db.operation.name", op),
+		),
+	)
+	return ctx, func(err error) {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+		if r.dbMetrics != nil {
+			r.dbMetrics.RecordQueryWithError(ctx, "neo4j", op, time.Since(start), err)
+		}
+	}
 }
 
 var errNilPatternID = errors.New("patternID must not be nil UUID")
@@ -54,12 +90,14 @@ func (r *neo4jRepository) query(ctx context.Context, write bool, cypher string, 
 
 // DeletePattern removes a Pattern node and all its relationships from the
 // graph, along with any of its concepts that no other pattern mentions.
-func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID) error {
+func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID) (err error) {
 	if patternID == uuid.Nil {
 		return errNilPatternID
 	}
+	ctx, done := r.instrument(ctx, "DeletePattern")
+	defer func() { done(err) }()
 
-	_, err := r.query(ctx, true,
+	_, err = r.query(ctx, true,
 		// Collect the pattern's concepts before detaching it, then drop only
 		// those no other pattern mentions. This replaces a graph-wide orphan
 		// sweep with work proportional to one pattern.
@@ -97,6 +135,8 @@ func (r *neo4jRepository) GetPatternGraph(ctx context.Context, patternID uuid.UU
 	if patternID == uuid.Nil {
 		return nil, errNilPatternID
 	}
+	ctx, done := r.instrument(ctx, "GetPatternGraph")
+	defer func() { done(err) }()
 
 	session := r.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: r.database, AccessMode: neo4j.AccessModeRead})
 	defer func() {
@@ -166,10 +206,12 @@ func toConcept(rec *neo4j.Record) (Concept, error) {
 
 // FindRelatedPatterns finds patterns related to the given pattern using pre-computed RELATED_TO edges.
 // Results include similarity scores and shared concept names.
-func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPattern, error) {
+func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) (_ []RelatedPattern, err error) {
 	if patternID == uuid.Nil {
 		return nil, errNilPatternID
 	}
+	ctx, done := r.instrument(ctx, "FindRelatedPatterns")
+	defer func() { done(err) }()
 
 	records, err := r.query(ctx, false, relatedCypher,
 		map[string]any{"patternId": patternID.String(), "limit": limit},

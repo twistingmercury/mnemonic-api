@@ -22,6 +22,7 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/operations"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
+	"github.com/twistingmercury/mnemonic-api/internal/metrics"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
 	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
@@ -80,7 +81,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	}
 
 	// Wire all dependencies.
-	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"))
+	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"), tel.MetricsRegistry())
 	if err != nil {
 		return fmt.Errorf("failed to wire dependencies: %w", err)
 	}
@@ -168,11 +169,12 @@ func wireDependencies(
 	cfg *config.MnemonicConfig,
 	logger zerolog.Logger,
 	meter metric.Meter,
+	registry *metrics.Registry,
 ) (Services, queue.Publisher, error) {
 	// Repositories.
 	patternRepo := patternrepo.NewRepository(pgPool)
 	enrichmentJobRepo := enrichmentjobrepo.NewRepository(pgPool)
-	graphRepo := graphrepo.NewRepository(neo4jDriver, cfg.Database.Neo4j.Database)
+	graphRepo := graphrepo.NewRepository(neo4jDriver, cfg.Database.Neo4j.Database, registry.Database)
 	chunkRepo := chunkrepo.NewRepository(pgPool)
 
 	// External services.
@@ -193,7 +195,7 @@ func wireDependencies(
 	}
 
 	// Domain services.
-	searchSvc := searchsvc.New(embeddingSvc, chunkRepo, logger)
+	searchSvc := searchsvc.New(embeddingSvc, chunkRepo, registry.Patterns, logger)
 	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, pgPool, chunkRepo, pub, logger)
 
 	// REST API services.

@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/twistingmercury/mnemonic-api/internal/config"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ErrEmbeddingFailed is returned when embedding generation fails after all retries.
@@ -42,7 +45,10 @@ type openaiEmbedding struct {
 // NewEmbeddingService creates an EmbeddingService backed by the OpenAI embeddings API.
 func NewEmbeddingService(cfg config.OpenAIConfig) EmbeddingService {
 	return &openaiEmbedding{
-		client:     &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		},
 		baseURL:    embeddingsEndpoint,
 		apiKey:     cfg.APIKey,
 		model:      cfg.EmbeddingModel,
@@ -83,6 +89,10 @@ func (e *openaiEmbedding) Embed(ctx context.Context, text string) ([]float32, er
 
 		// Sleep before retry, unless this was the last attempt.
 		if attempt < e.retries {
+			trace.SpanFromContext(ctx).AddEvent("openai.embed.retry", trace.WithAttributes(
+				attribute.Int("attempt", attempt+1),
+				attribute.String("error", err.Error()),
+			))
 			select {
 			case <-ctx.Done():
 				return nil, fmt.Errorf("%w: %v", ErrEmbeddingFailed, ctx.Err())

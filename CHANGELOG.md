@@ -11,10 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bounded failure diagnostics for unexpected request errors: a single private request-completion log records the status, route template, duration, request ID, active trace and span IDs, and a redacted cause, and the active span records the exception.
 - `X-Request-ID` validation. The API echoes identifiers of up to 128 ASCII letters, digits, dots, underscores, or hyphens, and generates a UUID when the header is missing or invalid.
+- Distributed tracing past the HTTP handler. PostgreSQL queries (otelpgx), Neo4j operations, OpenAI embedding calls (otelhttp) and RabbitMQ publishes now produce child spans, and the publish injects W3C trace context into the message headers so the enricher can continue the same trace.
+- PostgreSQL client metrics from otelpgx: `db.client.operation.duration` per operation and `pgxpool.*` pool statistics.
+- `mnemonic.db.query_latency` and `mnemonic.db.query_errors` are now recorded for every Neo4j operation, and `mnemonic.patterns.query_latency` and `mnemonic.patterns.returned` for every vector search. Previously these instruments were created but never recorded.
+- A `openai.embed.retry` span event for each retried embedding call.
 - A `--config <path>` flag that selects the configuration file and takes priority over `MNEMONIC_CONFIG_FILE`. Previously the loader looked for the flag but the binary never registered it, so passing it failed as an unknown flag.
 
 ### Changed
 
+- Custom latency histograms record fractional milliseconds. Previously durations were truncated to whole milliseconds, so sub-millisecond calls recorded 0.
 - Creating or updating a pattern now writes the pattern, its chunks and one enrichment job per chunk in a single transaction. Previously `Create` used no transaction at all, so a chunk failure returned 500 with the pattern already stored, and retrying the same name returned 409 with no way forward. A failed write now persists nothing and the name stays free.
 - A failed enrichment-job insert now fails the request instead of returning success. Previously the response was 2xx and the affected chunks were never embedded, with no row to find them by.
 - Enrichment jobs are published to RabbitMQ only after the transaction commits, so a rolled-back write cannot enqueue work for rows that no longer exist. Publication remains best-effort: a queue failure leaves the job rows pending for recovery.
@@ -30,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The `mnemonic.db.connection_pool.size` and `mnemonic.db.connection_pool.in_use` gauges, which were never recorded. otelpgx's `pgxpool.*` metrics replace them.
 - `rate_limit.*` and `enrichment.*` configuration. The API never read either block: it has no rate limiter, and enrichment runs in mnemonic-enricher, which has its own settings. Setting these keys no longer has any effect, and invalid values no longer stop startup.
 - Repository methods the API never calls: the enrichment-job lifecycle (claim, mark, reclaim, list, purge), chunk and pattern single-row reads and status updates, and graph writes (`SyncPattern`, `SyncConcepts`, `ComputeRelatedToEdges`, `HealthCheck`). These belong to the enricher.
 - The Neo4j session, transaction and result adapter interfaces in the graph repository. Each query now runs through `neo4j.ExecuteQuery`, which keeps the driver's retry behavior.

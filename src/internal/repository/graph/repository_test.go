@@ -12,7 +12,7 @@ import (
 
 // Nil IDs are rejected before the driver is touched, so a nil driver is fine.
 func TestRepository_RejectsNilPatternID(t *testing.T) {
-	repo := graph.NewRepository(nil, "neo4j")
+	repo := graph.NewRepository(nil, "neo4j", nil)
 	ctx := context.Background()
 
 	assert.ErrorContains(t, repo.DeletePattern(ctx, uuid.Nil), "patternID must not be nil UUID")
