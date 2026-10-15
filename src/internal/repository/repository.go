@@ -7,19 +7,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// ValidEnrichmentStatuses defines the valid values for the EnrichmentStatus field.
-var ValidEnrichmentStatuses = []string{"pending", "enriched", "failed"}
-
-// IsValidEnrichmentStatus reports whether status is a valid enrichment status value.
-func IsValidEnrichmentStatus(status string) bool {
-	for _, s := range ValidEnrichmentStatuses {
-		if s == status {
-			return true
-		}
-	}
-	return false
-}
-
 // ListOptions defines pagination parameters for list operations.
 type ListOptions struct {
 	// Limit specifies the maximum number of items to return.
@@ -28,14 +15,6 @@ type ListOptions struct {
 
 	// Offset specifies the number of items to skip before returning results.
 	Offset int
-}
-
-// DefaultListOptions returns ListOptions with sensible defaults.
-func DefaultListOptions() ListOptions {
-	return ListOptions{
-		Limit:  100,
-		Offset: 0,
-	}
 }
 
 // DBTX is an interface that both *pgxpool.Pool and pgxmock can satisfy.

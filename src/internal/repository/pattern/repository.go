@@ -22,9 +22,6 @@ type Repository interface {
 	// Get retrieves a pattern by ID. Returns ErrNotFound if not found.
 	Get(ctx context.Context, id uuid.UUID) (*Pattern, error)
 
-	// GetByName retrieves a pattern by name. Returns ErrNotFound if not found.
-	GetByName(ctx context.Context, name string) (*Pattern, error)
-
 	// Update modifies an existing pattern. Returns ErrNotFound if not found.
 	Update(ctx context.Context, pattern *Pattern) error
 
@@ -34,9 +31,6 @@ type Repository interface {
 	// List retrieves patterns with filtering and pagination.
 	// Returns the patterns, total count, and any error.
 	List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, int64, error)
-
-	// UpdateEnrichmentStatus updates the enrichment state of a pattern.
-	UpdateEnrichmentStatus(ctx context.Context, id uuid.UUID, status string, errMsg *string) error
 
 	// Exists checks if a pattern with the given ID exists.
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
@@ -132,20 +126,6 @@ func (r *pgxRepository) Get(ctx context.Context, id uuid.UUID) (*Pattern, error)
 	`
 
 	return r.scanPattern(ctx, query, id)
-}
-
-// GetByName retrieves a pattern by name from the database.
-func (r *pgxRepository) GetByName(ctx context.Context, name string) (*Pattern, error) {
-	query := `
-		SELECT id, name, description, content, tags,
-			   entity_type, language, domain, version, related_patterns,
-			   enrichment_status, enrichment_error, enriched_at,
-			   created_at, updated_at
-		FROM patterns
-		WHERE name = $1
-	`
-
-	return r.scanPattern(ctx, query, name)
 }
 
 // scanPattern is a helper that executes a query and scans the result into a Pattern.
@@ -411,40 +391,6 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 	}
 
 	return patterns, totalCount, nil
-}
-
-// UpdateEnrichmentStatus updates the enrichment state of a pattern.
-func (r *pgxRepository) UpdateEnrichmentStatus(ctx context.Context, id uuid.UUID, status string, errMsg *string) error {
-	if !repository.IsValidEnrichmentStatus(status) {
-		return fmt.Errorf("invalid enrichment status: %q", status)
-	}
-
-	now := time.Now()
-
-	var enrichedAt *time.Time
-	if status == "enriched" {
-		enrichedAt = &now
-	}
-
-	query := `
-		UPDATE patterns SET
-			enrichment_status = $2,
-			enrichment_error = $3,
-			enriched_at = $4,
-			updated_at = $5
-		WHERE id = $1
-	`
-
-	result, err := r.db.Exec(ctx, query, id, status, errMsg, enrichedAt, now)
-	if err != nil {
-		return err
-	}
-
-	if result.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-
-	return nil
 }
 
 // Exists checks if a pattern with the given ID exists.

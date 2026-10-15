@@ -3,12 +3,9 @@ package chunk
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 	"github.com/twistingmercury/mnemonic-api/internal/repository"
@@ -16,14 +13,9 @@ import (
 
 // Repository defines data access operations for pattern chunks.
 type Repository interface {
-	// Create stores a new chunk, returning id, enrichment_status, created_at, updated_at.
-	Create(ctx context.Context, c *Chunk) error
 
 	// CreateBatch inserts multiple chunks in a single transaction.
 	CreateBatch(ctx context.Context, chunks []*Chunk) error
-
-	// Get retrieves a chunk by ID. Returns ErrNotFound when absent.
-	Get(ctx context.Context, id uuid.UUID) (*Chunk, error)
 
 	// ListByPatternID retrieves all chunks for a pattern, ordered by chunk_index.
 	ListByPatternID(ctx context.Context, patternID uuid.UUID) ([]*Chunk, error)
@@ -31,22 +23,9 @@ type Repository interface {
 	// DeleteByPatternID removes all chunks belonging to a pattern.
 	DeleteByPatternID(ctx context.Context, patternID uuid.UUID) error
 
-	// UpdateEmbedding stores the embedding vector for a chunk.
-	UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error
-
-	// UpdateEnrichmentStatus updates the enrichment state of a chunk.
-	// When status is "enriched", enriched_at is set to the current time.
-	UpdateEnrichmentStatus(ctx context.Context, id uuid.UUID, status string, errMsg *string) error
-
 	// FindSimilar finds chunks similar to the given embedding vector.
 	// Joins to patterns to return parent pattern metadata.
 	FindSimilar(ctx context.Context, embedding []float32, opts SimilarityOptions) ([]*Match, error)
-
-	// AllEnrichedForPattern returns true if every chunk for the pattern has status "enriched".
-	AllEnrichedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error)
-
-	// AnyFailedForPattern returns true if any chunk for the pattern has status "failed".
-	AnyFailedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error)
 
 	// WithTx returns a Repository that executes all operations within db.
 	// Use this to enlist the repository in a caller-owned transaction.
@@ -66,33 +45,6 @@ func NewRepository(db repository.DBTX) Repository {
 // WithTx returns a new Repository that executes all operations within db.
 func (r *pgxRepository) WithTx(db repository.DBTX) Repository {
 	return &pgxRepository{db: db}
-}
-
-// Create stores a new chunk in the database.
-func (r *pgxRepository) Create(ctx context.Context, c *Chunk) error {
-	if c.ID == uuid.Nil {
-		c.ID = uuid.New()
-	}
-
-	query := `
-		INSERT INTO pattern_chunks (
-			id, pattern_id, section_title, chunk_index, content
-		) VALUES ($1, $2, $3, $4, $5)
-		RETURNING enrichment_status, created_at, updated_at
-	`
-
-	err := r.db.QueryRow(ctx, query,
-		c.ID,
-		c.PatternID,
-		c.SectionTitle,
-		c.ChunkIndex,
-		c.Content,
-	).Scan(&c.EnrichmentStatus, &c.CreatedAt, &c.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("creating chunk: %w", err)
-	}
-
-	return nil
 }
 
 // CreateBatch inserts multiple chunks in a single transaction.
@@ -165,39 +117,6 @@ func (r *pgxRepository) createBatchDirect(ctx context.Context, db repository.DBT
 	return nil
 }
 
-// Get retrieves a chunk by ID from the database.
-func (r *pgxRepository) Get(ctx context.Context, id uuid.UUID) (*Chunk, error) {
-	query := `
-		SELECT id, pattern_id, section_title, chunk_index, content,
-		       enrichment_status, enrichment_error, enriched_at,
-		       created_at, updated_at
-		FROM pattern_chunks
-		WHERE id = $1
-	`
-
-	var c Chunk
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&c.ID,
-		&c.PatternID,
-		&c.SectionTitle,
-		&c.ChunkIndex,
-		&c.Content,
-		&c.EnrichmentStatus,
-		&c.EnrichmentError,
-		&c.EnrichedAt,
-		&c.CreatedAt,
-		&c.UpdatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("getting chunk: %w", err)
-	}
-
-	return &c, nil
-}
-
 // ListByPatternID retrieves all chunks for a pattern, ordered by chunk_index.
 func (r *pgxRepository) ListByPatternID(ctx context.Context, patternID uuid.UUID) ([]*Chunk, error) {
 	query := `
@@ -251,64 +170,6 @@ func (r *pgxRepository) DeleteByPatternID(ctx context.Context, patternID uuid.UU
 	_, err := r.db.Exec(ctx, query, patternID)
 	if err != nil {
 		return fmt.Errorf("deleting chunks by pattern: %w", err)
-	}
-
-	return nil
-}
-
-// UpdateEmbedding stores the embedding vector for a chunk.
-func (r *pgxRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
-	now := time.Now()
-	query := `
-		UPDATE pattern_chunks SET
-			embedding = $2,
-			updated_at = $3
-		WHERE id = $1
-	`
-
-	vec := pgvector.NewVector(embedding)
-	result, err := r.db.Exec(ctx, query, id, vec, now)
-	if err != nil {
-		return fmt.Errorf("updating chunk embedding: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-
-	return nil
-}
-
-// UpdateEnrichmentStatus updates the enrichment state of a chunk.
-// When status is "enriched", enriched_at is set to the current time.
-func (r *pgxRepository) UpdateEnrichmentStatus(ctx context.Context, id uuid.UUID, status string, errMsg *string) error {
-	if !repository.IsValidEnrichmentStatus(status) {
-		return fmt.Errorf("invalid enrichment status: %q", status)
-	}
-
-	now := time.Now()
-
-	var enrichedAt *time.Time
-	if status == "enriched" {
-		enrichedAt = &now
-	}
-
-	query := `
-		UPDATE pattern_chunks SET
-			enrichment_status = $2,
-			enrichment_error = $3,
-			enriched_at = $4,
-			updated_at = $5
-		WHERE id = $1
-	`
-
-	result, err := r.db.Exec(ctx, query, id, status, errMsg, enrichedAt, now)
-	if err != nil {
-		return fmt.Errorf("updating chunk enrichment status: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return ErrNotFound
 	}
 
 	return nil
@@ -402,42 +263,4 @@ func (r *pgxRepository) FindSimilar(ctx context.Context, embedding []float32, op
 	}
 
 	return matches, nil
-}
-
-// AllEnrichedForPattern returns true if every chunk for the pattern has status "enriched"
-// and the pattern has at least one chunk. Returns false for patterns with no chunks.
-func (r *pgxRepository) AllEnrichedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error) {
-	query := `
-		SELECT COUNT(*) > 0
-		   AND COUNT(*) FILTER (WHERE enrichment_status != 'enriched') = 0
-		FROM pattern_chunks
-		WHERE pattern_id = $1
-	`
-
-	var allEnriched bool
-	err := r.db.QueryRow(ctx, query, patternID).Scan(&allEnriched)
-	if err != nil {
-		return false, fmt.Errorf("checking all enriched for pattern: %w", err)
-	}
-
-	return allEnriched, nil
-}
-
-// AnyFailedForPattern returns true if any chunk for the pattern has status "failed".
-func (r *pgxRepository) AnyFailedForPattern(ctx context.Context, patternID uuid.UUID) (bool, error) {
-	query := `
-		SELECT EXISTS (
-			SELECT 1 FROM pattern_chunks
-			WHERE pattern_id = $1
-			  AND enrichment_status = 'failed'
-		)
-	`
-
-	var anyFailed bool
-	err := r.db.QueryRow(ctx, query, patternID).Scan(&anyFailed)
-	if err != nil {
-		return false, fmt.Errorf("checking any failed for pattern: %w", err)
-	}
-
-	return anyFailed, nil
 }

@@ -1,7 +1,6 @@
-// Package enrichmentjob provides the PostgreSQL repository implementation for
-// enrichment job lifecycle management. It supports job creation, atomic claim
-// via FOR UPDATE SKIP LOCKED, state transitions (pending, processing, completed,
-// failed), retry scheduling, stale job reclamation, and cleanup operations.
+// Package enrichmentjob provides the PostgreSQL repository the API uses to
+// enqueue enrichment jobs. Claiming, retrying and cleaning up jobs is the
+// enricher's responsibility and lives in mnemonic-enricher.
 //
 // Documentation:
 

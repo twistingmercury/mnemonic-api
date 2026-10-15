@@ -61,22 +61,6 @@ func TestDefaultValues(t *testing.T) {
 	assert.Equal(t, config.DefaultOpenAIRetryAttempts, cfg.OpenAI.RetryAttempts)
 	assert.Equal(t, config.DefaultOpenAIRetryDelay, cfg.OpenAI.RetryDelay)
 
-	// Rate limit defaults
-	assert.Equal(t, config.DefaultRateLimitEnabled, cfg.RateLimit.Enabled)
-	assert.Equal(t, config.DefaultRateLimitRequestsPerSecond, cfg.RateLimit.RequestsPerSecond)
-	assert.Equal(t, config.DefaultRateLimitBurstSize, cfg.RateLimit.BurstSize)
-	assert.Equal(t, config.DefaultRateLimitPerUserRPM, cfg.RateLimit.PerUser.RequestsPerMinute)
-	assert.Equal(t, config.DefaultRateLimitPerUserBurst, cfg.RateLimit.PerUser.BurstSize)
-
-	// Enrichment defaults
-	assert.Equal(t, config.DefaultEnrichmentMaxAttempts, cfg.Enrichment.MaxAttempts)
-	assert.Equal(t, config.DefaultEnrichmentRetryDelay, cfg.Enrichment.RetryDelay)
-	assert.Equal(t, config.DefaultEnrichmentJobTimeout, cfg.Enrichment.JobTimeout)
-	assert.Equal(t, config.DefaultEnrichmentDrainTimeout, cfg.Enrichment.DrainTimeout)
-	assert.Equal(t, config.DefaultEnrichmentCompletedRetention, cfg.Enrichment.CompletedRetention)
-	assert.Equal(t, config.DefaultEnrichmentFailedRetention, cfg.Enrichment.FailedRetention)
-	assert.Equal(t, config.DefaultEnrichmentRelatedToMinSimilarity, cfg.Enrichment.RelatedToMinSimilarity)
-
 	// Logging defaults
 	assert.Equal(t, config.DefaultLoggingLevel, cfg.Logging.Level)
 	assert.Equal(t, config.DefaultLoggingFormat, cfg.Logging.Format)
@@ -270,14 +254,6 @@ func TestEnvironmentVariableNaming(t *testing.T) {
 			value:  "sk-test-123",
 			check: func(t *testing.T, cfg *config.MnemonicConfig) {
 				assert.Equal(t, "sk-test-123", cfg.OpenAI.APIKey)
-			},
-		},
-		{
-			name:   "rate_limit.per_user.requests_per_minute",
-			envVar: "MNEMONIC_RATE_LIMIT_PER_USER_REQUESTS_PER_MINUTE",
-			value:  "120",
-			check: func(t *testing.T, cfg *config.MnemonicConfig) {
-				assert.Equal(t, 120, cfg.RateLimit.PerUser.RequestsPerMinute)
 			},
 		},
 		{
@@ -540,169 +516,6 @@ func TestValidation_OpenAIConfig(t *testing.T) {
 				cfg.OpenAI.RetryDelay = -1 * time.Second
 			},
 			expectError: "openai.retry_delay",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validConfig()
-			tt.modify(cfg)
-			errs := cfg.Validate()
-			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
-		})
-	}
-}
-
-// TestValidation_RateLimitConfig tests rate limit configuration validation.
-func TestValidation_RateLimitConfig(t *testing.T) {
-	tests := []struct {
-		name        string
-		modify      func(cfg *config.MnemonicConfig)
-		expectError string
-	}{
-		{
-			name: "enabled with zero requests_per_second",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.RateLimit.Enabled = true
-				cfg.RateLimit.RequestsPerSecond = 0
-			},
-			expectError: "rate_limit.requests_per_second",
-		},
-		{
-			name: "enabled with zero burst_size",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.RateLimit.Enabled = true
-				cfg.RateLimit.BurstSize = 0
-			},
-			expectError: "rate_limit.burst_size",
-		},
-		{
-			name: "enabled with zero per_user.requests_per_minute",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.RateLimit.Enabled = true
-				cfg.RateLimit.PerUser.RequestsPerMinute = 0
-			},
-			expectError: "rate_limit.per_user.requests_per_minute",
-		},
-		{
-			name: "enabled with zero per_user.burst_size",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.RateLimit.Enabled = true
-				cfg.RateLimit.PerUser.BurstSize = 0
-			},
-			expectError: "rate_limit.per_user.burst_size",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validConfig()
-			tt.modify(cfg)
-			errs := cfg.Validate()
-			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
-		})
-	}
-}
-
-// TestValidation_RateLimitDisabled verifies no validation errors when rate limiting is disabled.
-func TestValidation_RateLimitDisabled(t *testing.T) {
-	cfg := validConfig()
-	cfg.RateLimit.Enabled = false
-	cfg.RateLimit.RequestsPerSecond = 0 // Invalid when enabled, but OK when disabled
-	cfg.RateLimit.BurstSize = 0
-
-	errs := cfg.Validate()
-	// Should not have rate limit errors when disabled
-	for _, err := range errs {
-		assert.NotContains(t, err.Field, "rate_limit")
-	}
-}
-
-// TestValidation_EnrichmentConfig tests enrichment configuration validation.
-func TestValidation_EnrichmentConfig(t *testing.T) {
-	tests := []struct {
-		name        string
-		modify      func(cfg *config.MnemonicConfig)
-		expectError string
-	}{
-		{
-			name: "zero max_attempts",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.MaxAttempts = 0
-			},
-			expectError: "enrichment.max_attempts",
-		},
-		{
-			name: "negative retry_delay",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.RetryDelay = -1 * time.Second
-			},
-			expectError: "enrichment.retry_delay",
-		},
-		{
-			name: "zero job_timeout",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.JobTimeout = 0
-			},
-			expectError: "enrichment.job_timeout",
-		},
-		{
-			name: "zero drain_timeout",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.DrainTimeout = 0
-			},
-			expectError: "enrichment.drain_timeout",
-		},
-		{
-			name: "negative drain_timeout",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.DrainTimeout = -1 * time.Second
-			},
-			expectError: "enrichment.drain_timeout",
-		},
-		{
-			name: "zero completed_retention",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.CompletedRetention = 0
-			},
-			expectError: "enrichment.completed_retention",
-		},
-		{
-			name: "negative completed_retention",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.CompletedRetention = -1 * time.Hour
-			},
-			expectError: "enrichment.completed_retention",
-		},
-		{
-			name: "zero failed_retention",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.FailedRetention = 0
-			},
-			expectError: "enrichment.failed_retention",
-		},
-		{
-			name: "negative failed_retention",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.FailedRetention = -1 * time.Hour
-			},
-			expectError: "enrichment.failed_retention",
-		},
-		{
-			name: "negative related_to_min_similarity",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.RelatedToMinSimilarity = -0.1
-			},
-			expectError: "enrichment.related_to_min_similarity",
-		},
-		{
-			name: "related_to_min_similarity over 1",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Enrichment.RelatedToMinSimilarity = 1.5
-			},
-			expectError: "enrichment.related_to_min_similarity",
 		},
 	}
 
@@ -1709,24 +1522,6 @@ func validConfig() *config.MnemonicConfig {
 			MaxRequestsPerMinute: 500,
 			RetryAttempts:        3,
 			RetryDelay:           1 * time.Second,
-		},
-		RateLimit: config.RateLimitConfig{
-			Enabled:           false,
-			RequestsPerSecond: 100,
-			BurstSize:         200,
-			PerUser: config.PerUserRateLimit{
-				RequestsPerMinute: 60,
-				BurstSize:         10,
-			},
-		},
-		Enrichment: config.EnrichmentConfig{
-			MaxAttempts:            3,
-			RetryDelay:             30 * time.Second,
-			JobTimeout:             5 * time.Minute,
-			DrainTimeout:           30 * time.Second,
-			CompletedRetention:     168 * time.Hour,
-			FailedRetention:        720 * time.Hour,
-			RelatedToMinSimilarity: 0.3,
 		},
 		Logging: config.LoggingConfig{
 			Level:         "info",
