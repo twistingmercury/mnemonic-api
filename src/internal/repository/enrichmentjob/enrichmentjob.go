@@ -1,7 +1,6 @@
 package enrichmentjob
 
 import (
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,55 +63,5 @@ const (
 	StatusFailed JobStatus = "failed"
 )
 
-// ValidStatuses defines the valid values for the Status field.
-var ValidStatuses = []JobStatus{
-	StatusPending,
-	StatusProcessing,
-	StatusCompleted,
-	StatusFailed,
-}
-
-// IsValidStatus checks if the given status is valid.
-func IsValidStatus(status JobStatus) bool {
-	return slices.Contains(ValidStatuses, status)
-}
-
-// IsPending returns true if the job is in pending state.
-func (j *Job) IsPending() bool {
-	return j.Status == StatusPending
-}
-
-// IsProcessing returns true if the job is currently being processed.
-func (j *Job) IsProcessing() bool {
-	return j.Status == StatusProcessing
-}
-
-// IsCompleted returns true if the job completed successfully.
-func (j *Job) IsCompleted() bool {
-	return j.Status == StatusCompleted
-}
-
-// IsFailed returns true if the job failed.
-func (j *Job) IsFailed() bool {
-	return j.Status == StatusFailed
-}
-
-// CanRetry returns true if the job can be retried.
-func (j *Job) CanRetry() bool {
-	return j.Attempts < j.MaxAttempts
-}
-
 // DefaultMaxAttempts is the default maximum number of attempts for a job.
 const DefaultMaxAttempts = 3
-
-// Filter defines filtering options for job queries.
-type Filter struct {
-	// Status filters by job status (pending, processing, completed, failed).
-	Status *string
-
-	// PatternID filters by the associated pattern ID.
-	PatternID *uuid.UUID
-
-	// ChunkID filters jobs by chunk_id.
-	ChunkID *uuid.UUID
-}

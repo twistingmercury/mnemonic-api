@@ -2,10 +2,11 @@ package graph_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	neo4jcfg "github.com/neo4j/neo4j-go-driver/v5/neo4j/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -31,14 +32,13 @@ func TestRepository_InstrumentsOperations(t *testing.T) {
 	dbMetrics, err := metrics.NewDatabase(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
 	require.NoError(t, err)
 
-	session := &mockSessionExecutor{
-		executeWriteFn: func(_ context.Context, _ func(runner graph.CypherRunner) (any, error)) (any, error) {
-			return nil, errors.New("connection closed")
-		},
-	}
-	repo := graph.ExportNewRepositoryWithMetrics(func(_ context.Context) graph.SessionExecutor {
-		return session
-	}, dbMetrics)
+	// Nothing listens on port 1, so the query fails fast without retries.
+	driver, err := neo4j.NewDriverWithContext("bolt://127.0.0.1:1", neo4j.NoAuth(), func(c *neo4jcfg.Config) {
+		c.MaxTransactionRetryTime = 0
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	repo := graph.NewRepository(driver, "neo4j", dbMetrics)
 
 	require.Error(t, repo.DeletePattern(context.Background(), uuid.New()))
 

@@ -19,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Go toolchain and build images moved to Go 1.27.2, which fixes the standard-library vulnerabilities `govulncheck` reports against 1.27.1 (including GO-2026-6599 and GO-2026-6600), and `golang.org/x/net` moved to v0.60.0 for the HTTP/2 advisories GO-2026-6603, 6610, 6611, 6612 and 6617.
 - Custom latency histograms record fractional milliseconds. Previously durations were truncated to whole milliseconds, so sub-millisecond calls recorded 0.
 - Creating or updating a pattern now writes the pattern, its chunks and one enrichment job per chunk in a single transaction. Previously `Create` used no transaction at all, so a chunk failure returned 500 with the pattern already stored, and retrying the same name returned 409 with no way forward. A failed write now persists nothing and the name stays free.
 - A failed enrichment-job insert now fails the request instead of returning success. Previously the response was 2xx and the affected chunks were never embedded, with no row to find them by.
@@ -27,11 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error response `traceId` now identifies the active OpenTelemetry trace rather than the incoming `X-Request-ID`, and is omitted when no valid trace context exists. Request identity and trace identity are now separate values.
 - Request-completion logging moved from the `otelx` Gin middleware to an in-repository implementation that carries the failure cause.
 - `database.postgres.max_open_conns` and `max_idle_conns` are typed `int32`, matching the pool settings they configure. A value too large is now rejected while loading, naming the key, instead of being silently clamped.
+- Creating or updating a pattern inserts all of its chunks in one statement and all of its enrichment jobs in another, so the write costs two round trips however many sections the pattern has. Previously each chunk and each job was its own round trip.
+- `GET /v1/api/patterns/:id` reads the pattern row once and fetches related patterns and concepts in one Neo4j session, and the chunk list it embeds no longer loads chunk content. Previously the pattern was read twice, Neo4j was opened twice, and every chunk body was read and discarded.
+- `GET /v1/api/patterns` no longer reads pattern content, which the list response never returned.
+- Deleting a pattern removes only the concepts that pattern left unreferenced. Previously every delete also scanned every `:Concept` node in the graph for orphans.
+- A RabbitMQ publisher waiting to reconnect no longer holds its lock during `reconnect_delay`, so other requests keep publishing meanwhile, and concurrent failures trigger one reconnect instead of one each.
 - A discovered `/etc/mnemonic/config.yaml` or `./config.yaml` that exists but cannot be read or parsed now stops startup with `failed to read config file <path>`. Previously only an explicitly selected file failed; a broken discovered file was skipped and the service started on defaults and environment variables.
 
 ### Removed
 
 - The `mnemonic.db.connection_pool.size` and `mnemonic.db.connection_pool.in_use` gauges, which were never recorded. otelpgx's `pgxpool.*` metrics replace them.
+- `rate_limit.*` and `enrichment.*` configuration. The API never read either block: it has no rate limiter, and enrichment runs in mnemonic-enricher, which has its own settings. Setting these keys no longer has any effect, and invalid values no longer stop startup.
+- Repository methods the API never calls: the enrichment-job lifecycle (claim, mark, reclaim, list, purge), chunk and pattern single-row reads and status updates, and graph writes (`SyncPattern`, `SyncConcepts`, `ComputeRelatedToEdges`, `HealthCheck`). These belong to the enricher.
+- The Neo4j session, transaction and result adapter interfaces in the graph repository. Each query now runs through `neo4j.ExecuteQuery`, which keeps the driver's retry behavior.
 - In-process TLS support and `server.tls.*` configuration. TLS terminates at the reverse proxy and the API serves plain HTTP behind it, which is what the Docker health probe already assumed.
 
 ### Fixed
