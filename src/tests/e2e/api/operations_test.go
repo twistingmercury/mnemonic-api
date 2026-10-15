@@ -99,10 +99,9 @@ func TestHealthCheck_AllHealthyReturns200(t *testing.T) {
 		t.Fatalf("expected 'status' field to be a string, got %T", body["status"])
 	}
 
-	// OpenAI checks report Warning (still HTTP 200) when the API is unreachable
-	// or the key is not valid, as with a test key.
-	if status != "OK" && status != "Warning" {
-		t.Fatalf("expected status to be 'OK' or 'Warning', got %q", status)
+	// Every dependency, OpenAI included (served by the stub), must be healthy.
+	if status != "OK" {
+		t.Fatalf("expected status 'OK', got %q\nbody: %v", status, body)
 	}
 
 	// Verify name field is "mnemonic"

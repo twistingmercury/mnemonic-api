@@ -46,6 +46,12 @@ services:
     networks:
       - mnemonic-network
 
+  openai_stub:
+    build:
+      context: ./openai-stub
+    networks:
+      - mnemonic-network
+
 # this is the testing target
   mnemonic_api:
     image: ${MNEMONIC_API_IMAGE:-ghcr.io/twistingmercury/mnemonic-api:latest}
@@ -58,6 +64,7 @@ services:
       MNEMONIC_DATABASE_NEO4J_URI: bolt://neo4j:7687
       MNEMONIC_DATABASE_NEO4J_PASSWORD: mnemonic_dev
       MNEMONIC_OPENAI_API_KEY: sk-test-dummy
+      MNEMONIC_OPENAI_BASE_URL: http://openai_stub:8090/v1
       MNEMONIC_LOGGING_LEVEL: error
       MNEMONIC_QUEUE_RABBITMQ_HOST: rabbitmq
       MNEMONIC_QUEUE_RABBITMQ_USER: mnemonic
@@ -69,6 +76,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      openai_stub:
+        condition: service_started
     healthcheck:
       test: ["CMD", "/mnemonic-api", "--health"]
       interval: 2s

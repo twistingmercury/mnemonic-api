@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/twistingmercury/heartbeat/v2"
@@ -64,6 +65,9 @@ func Initialize(deps Dependencies) error {
 	healthDeps = &deps
 
 	openAIBaseURL := defaultOpenAIBaseURL
+	if deps.OpenAI.BaseURL != "" {
+		openAIBaseURL = strings.TrimRight(deps.OpenAI.BaseURL, "/")
+	}
 
 	descriptors = []heartbeat.DependencyDescriptor{
 		{

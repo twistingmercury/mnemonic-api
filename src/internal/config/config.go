@@ -70,6 +70,7 @@ type Neo4jConfig struct {
 // OpenAIConfig contains OpenAI API settings.
 type OpenAIConfig struct {
 	APIKey               string        `mapstructure:"api_key"` // #nosec G117 -- credentials loaded from config/env, not serialized
+	BaseURL              string        `mapstructure:"base_url"`
 	EmbeddingModel       string        `mapstructure:"embedding_model"`
 	EmbeddingDimensions  int           `mapstructure:"embedding_dimensions"`
 	ExtractionModel      string        `mapstructure:"extraction_model"`
@@ -251,6 +252,7 @@ func SetDefaults(v *viper.Viper) {
 
 	// OpenAI defaults
 	v.SetDefault("openai.api_key", "")
+	v.SetDefault("openai.base_url", DefaultOpenAIBaseURL)
 	v.SetDefault("openai.embedding_model", DefaultOpenAIEmbeddingModel)
 	v.SetDefault("openai.embedding_dimensions", DefaultOpenAIEmbeddingDimensions)
 	v.SetDefault("openai.extraction_model", DefaultOpenAIExtractionModel)
@@ -504,6 +506,16 @@ func (c *OpenAIConfig) validate() ValidationErrors {
 			Field:   "openai.retry_delay",
 			Message: "must be non-negative",
 		})
+	}
+
+	if c.BaseURL != "" {
+		u, err := url.Parse(c.BaseURL)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			errs = append(errs, ValidationError{
+				Field:   "openai.base_url",
+				Message: fmt.Sprintf("must be an absolute URL with scheme and host, got %q", c.BaseURL),
+			})
+		}
 	}
 
 	return errs

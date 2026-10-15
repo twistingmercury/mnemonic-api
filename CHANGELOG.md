@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An `openai.base_url` setting (`MNEMONIC_OPENAI_BASE_URL`, default `https://api.openai.com/v1`) used by the embedding client and the `/health` model check. The E2E suite points it at a local OpenAI stub, so search tests now run instead of skipping and no test reaches api.openai.com.
 - Bounded failure diagnostics for unexpected request errors: a single private request-completion log records the status, route template, duration, request ID, active trace and span IDs, and a redacted cause, and the active span records the exception.
 - `X-Request-ID` validation. The API echoes identifiers of up to 128 ASCII letters, digits, dots, underscores, or hyphens, and generates a UUID when the header is missing or invalid.
 - Distributed tracing past the HTTP handler. PostgreSQL queries (otelpgx), Neo4j operations, OpenAI embedding calls (otelhttp) and RabbitMQ publishes now produce child spans, and the publish injects W3C trace context into the message headers so the enricher can continue the same trace.
