@@ -71,15 +71,6 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	}
 	defer closeDatabases(pgPool, neo4jDriver, logger)
 
-	// Initialize health checks with real database connections.
-	if err := health.Initialize(health.Dependencies{
-		PGPool:      pgPool,
-		Neo4jDriver: neo4jDriver,
-		OpenAI:      cfg.OpenAI,
-	}); err != nil {
-		return fmt.Errorf("failed to initialize health checks: %w", err)
-	}
-
 	// Wire all dependencies.
 	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"), tel.MetricsRegistry())
 	if err != nil {
@@ -90,6 +81,17 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 			logger.Error().Err(closeErr).Msg("publisher close error")
 		}
 	}()
+
+	// Initialize health checks with the real connections.
+	queueConn, _ := pub.(health.QueueConnection)
+	if err := health.Initialize(health.Dependencies{
+		PGPool:      pgPool,
+		Neo4jDriver: neo4jDriver,
+		OpenAI:      cfg.OpenAI,
+		Queue:       queueConn,
+	}); err != nil {
+		return fmt.Errorf("failed to initialize health checks: %w", err)
+	}
 
 	// Create request metrics middleware.
 	requestMetrics, err := middleware.NewRequestMetrics(tel.Meter("mnemonic/http"))

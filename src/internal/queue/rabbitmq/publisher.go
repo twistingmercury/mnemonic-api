@@ -140,6 +140,17 @@ func (c headerCarrier) Keys() []string {
 	return keys
 }
 
+// Connected reports whether the broker connection and channel are open. After
+// the broker drops them the publisher stays disconnected until the next
+// Publish reconnects.
+func (p *Publisher) Connected() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	conn, connOK := p.conn.(interface{ IsClosed() bool })
+	ch, chOK := p.ch.(interface{ IsClosed() bool })
+	return connOK && chOK && !conn.IsClosed() && !ch.IsClosed()
+}
+
 // Publish serialises jobID into a JSON message and delivers it to the
 // configured queue with persistent delivery mode. The message headers carry
 // the trace context of a producer span, so the consumer can continue the

@@ -20,3 +20,6 @@ type Channel = channel
 func NewTestPublisher(cfg PublisherConfig, failures metric.Int64Counter, ch Channel, dial func() (io.Closer, Channel, error)) *Publisher {
 	return &Publisher{cfg: cfg, ch: ch, dial: dial, publishFailures: failures}
 }
+
+// SetConnForTest replaces the publisher's broker connection.
+func (p *Publisher) SetConnForTest(conn io.Closer) { p.conn = conn }

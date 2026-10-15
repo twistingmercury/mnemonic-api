@@ -90,7 +90,7 @@ func (m *RequestMetrics) MiddlewareWithSkipPaths(skipPaths []string) gin.Handler
 		c.Next()
 
 		// Record metrics after request completes
-		duration := float64(time.Since(start).Milliseconds())
+		duration := float64(time.Since(start)) / float64(time.Millisecond)
 
 		// Use "unknown" if no route pattern available to avoid high-cardinality metrics
 		route := c.FullPath()

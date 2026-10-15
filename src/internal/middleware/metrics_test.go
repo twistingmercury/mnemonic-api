@@ -127,6 +127,15 @@ func TestRequestMetrics(t *testing.T) {
 	// a tight upper bound would be timing-flaky.
 	assert.GreaterOrEqual(t, slowSum, float64(slowFloor.Milliseconds()))
 	assert.Less(t, slowSum, float64(time.Minute.Milliseconds()))
+	// Sub-millisecond requests keep their fractional milliseconds instead of
+	// being truncated to zero.
+	fastAttrs := attribute.NewSet(attribute.String("http.method", "GET"), attribute.String("http.route", "/failure"), attribute.String("http.status_code", "503"))
+	fastSeries := fastAttrs.Equivalent()
+	for _, point := range hist.DataPoints {
+		if point.Attributes.Equivalent() == fastSeries {
+			assert.Greater(t, point.Sum, float64(0), "a fast request records a non-zero duration")
+		}
+	}
 	flight := metrics["mnemonic.http.request.in_flight"]
 	assert.Equal(t, "{request}", flight.Unit)
 	inflight := flight.Data.(metricdata.Sum[int64])
