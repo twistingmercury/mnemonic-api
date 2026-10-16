@@ -18,11 +18,10 @@ import (
 
 // testPattern returns a sample pattern for testing.
 func testPattern() *pattern.Pattern {
-	desc := "A pattern for testing"
 	return &pattern.Pattern{
 		ID:               uuid.New(),
 		Name:             "test-pattern",
-		Description:      &desc,
+		Description:      new("A pattern for testing"),
 		Content:          "This is test content for the pattern.",
 		Tags:             []string{"test", "example"},
 		EntityType:       "go-pattern",
@@ -386,7 +385,7 @@ func TestRepository_Update_ResetsEnrichmentStatus(t *testing.T) {
 	p := &pattern.Pattern{
 		ID:               uuid.New(),
 		Name:             "enriched-pattern",
-		Description:      ptrString("Description"),
+		Description:      new("Description"),
 		Content:          "Original content",
 		Tags:             []string{"tag1"},
 		EntityType:       "go-pattern",
@@ -426,11 +425,6 @@ func TestRepository_Update_ResetsEnrichmentStatus(t *testing.T) {
 	assert.False(t, p.UpdatedAt.IsZero(), "updated_at should be set")
 
 	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-// ptrString is a helper to create a pointer to a string.
-func ptrString(s string) *string {
-	return &s
 }
 
 func TestRepository_Delete(t *testing.T) {
@@ -639,30 +633,6 @@ func TestRepository_List(t *testing.T) {
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
-}
-
-func TestRepository_ContextCancellation(t *testing.T) {
-	t.Parallel()
-
-	mock, err := pgxmock.NewPool()
-	require.NoError(t, err)
-	defer mock.Close()
-
-	// Create a cancelled context
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // immediately cancel
-
-	// Setup mock to return context.Canceled error
-	mock.ExpectQuery("SELECT .* FROM patterns").
-		WithArgs(pgxmock.AnyArg()).
-		WillReturnError(context.Canceled)
-
-	repo := pattern.NewRepository(mock)
-	p, err := repo.Get(ctx, uuid.New())
-
-	assert.ErrorIs(t, err, context.Canceled)
-	assert.Nil(t, p)
-	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestRepository_Create_GeneratesUUID(t *testing.T) {

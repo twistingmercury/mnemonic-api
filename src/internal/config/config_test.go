@@ -969,8 +969,8 @@ func TestLoadWithFlags_UnreadableExplicitFile(t *testing.T) {
 	}{
 		{name: "missing via flag", viaFlag: true, notFound: true},
 		{name: "missing via env", viaFlag: false, notFound: true},
-		{name: "malformed via flag", viaFlag: true, content: ptr("server: [unclosed\n")},
-		{name: "malformed via env", viaFlag: false, content: ptr("server: [unclosed\n")},
+		{name: "malformed via flag", viaFlag: true, content: new("server: [unclosed\n")},
+		{name: "malformed via env", viaFlag: false, content: new("server: [unclosed\n")},
 	}
 
 	for _, tt := range tests {
@@ -1290,8 +1290,6 @@ func configFlagSet(t *testing.T, path string) *pflag.FlagSet {
 	}
 	return flags
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // validConfig returns a fully valid configuration for testing.
 func validConfig() *config.MnemonicConfig {

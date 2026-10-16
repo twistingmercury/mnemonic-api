@@ -3,6 +3,7 @@ package api_test
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ import (
 func TestListPatterns_ReturnsOKWithPaginatedSummaries(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestListPatterns_ReturnsOKWithPaginatedSummaries(t *testing.T) {
 func TestListPatterns_DefaultPaginationValues(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestListPatterns_DefaultPaginationValues(t *testing.T) {
 func TestListPatterns_CustomLimit(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns?limit=5")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns?limit=5", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns?limit=5: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestListPatterns_CursorPaginationWalksAllPages(t *testing.T) {
 			Language:   "go",
 			Domain:     "backend",
 		}
-		resp, err := client.Post("/v1/api/patterns", body)
+		resp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 		if err != nil {
 			t.Fatalf("failed to create pattern: %v", err)
 		}
@@ -131,7 +132,7 @@ func TestListPatterns_CursorPaginationWalksAllPages(t *testing.T) {
 			path = fmt.Sprintf("%s&cursor=%s", path, cursor)
 		}
 
-		resp, err := client.Get(path)
+		resp, err := client.Request(http.MethodGet, path, nil)
 		if err != nil {
 			t.Fatalf("failed to GET %s: %v", path, err)
 		}
@@ -173,7 +174,7 @@ func TestListPatterns_SummaryExcludesContentField(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestListPatterns_SummaryExcludesContentField(t *testing.T) {
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
 	// List patterns and find our created pattern
-	resp, err := client.Get("/v1/api/patterns")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns: %v", err)
 	}
@@ -205,7 +206,7 @@ func TestListPatterns_SummaryExcludesContentField(t *testing.T) {
 func TestListPatterns_ResponseIncludesRequestIDHeader(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns: %v", err)
 	}
@@ -229,7 +230,7 @@ func TestListPatterns_FilterByTags(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestListPatterns_FilterByTags(t *testing.T) {
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
 	// Filter by the unique tag
-	resp, err := client.Get("/v1/api/patterns?tags=" + uniqueTag)
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns?tags="+uniqueTag, nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns?tags=...: %v", err)
 	}
@@ -288,7 +289,7 @@ func TestListPatterns_FilterByMultipleTagsUsesANDLogic(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	bothResp, err := client.Post("/v1/api/patterns", bothBody)
+	bothResp, err := client.Request(http.MethodPost, "/v1/api/patterns", bothBody)
 	if err != nil {
 		t.Fatalf("failed to create pattern with both tags: %v", err)
 	}
@@ -304,7 +305,7 @@ func TestListPatterns_FilterByMultipleTagsUsesANDLogic(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	onlyAResp, err := client.Post("/v1/api/patterns", onlyABody)
+	onlyAResp, err := client.Request(http.MethodPost, "/v1/api/patterns", onlyABody)
 	if err != nil {
 		t.Fatalf("failed to create pattern with only tag A: %v", err)
 	}
@@ -312,7 +313,7 @@ func TestListPatterns_FilterByMultipleTagsUsesANDLogic(t *testing.T) {
 	onlyA := helpers.ParseJSON[helpers.Pattern](t, onlyAResp)
 
 	// Filter by both tags — AND logic means only "both" pattern should appear
-	resp, err := client.Get(fmt.Sprintf("/v1/api/patterns?tags=%s,%s", tagA, tagB))
+	resp, err := client.Request(http.MethodGet, fmt.Sprintf("/v1/api/patterns?tags=%s,%s", tagA, tagB), nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns?tags=...: %v", err)
 	}
@@ -352,14 +353,14 @@ func TestListPatterns_FullTextSearchByNameAndDescription(t *testing.T) {
 		Language:    "go",
 		Domain:      "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get("/v1/api/patterns?search=" + uniqueWord)
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns?search="+uniqueWord, nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns?search=...: %v", err)
 	}
@@ -396,7 +397,7 @@ func TestListPatterns_CombinedTagAndSearchFilters(t *testing.T) {
 		Language:    "go",
 		Domain:      "backend",
 	}
-	matchResp, err := client.Post("/v1/api/patterns", matchBody)
+	matchResp, err := client.Request(http.MethodPost, "/v1/api/patterns", matchBody)
 	if err != nil {
 		t.Fatalf("failed to create matching pattern: %v", err)
 	}
@@ -412,7 +413,7 @@ func TestListPatterns_CombinedTagAndSearchFilters(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	tagOnlyResp, err := client.Post("/v1/api/patterns", tagOnlyBody)
+	tagOnlyResp, err := client.Request(http.MethodPost, "/v1/api/patterns", tagOnlyBody)
 	if err != nil {
 		t.Fatalf("failed to create tag-only pattern: %v", err)
 	}
@@ -420,7 +421,7 @@ func TestListPatterns_CombinedTagAndSearchFilters(t *testing.T) {
 	tagOnly := helpers.ParseJSON[helpers.Pattern](t, tagOnlyResp)
 
 	path := fmt.Sprintf("/v1/api/patterns?tags=%s&search=%s", uniqueTag, uniqueWord)
-	resp, err := client.Get(path)
+	resp, err := client.Request(http.MethodGet, path, nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", path, err)
 	}
@@ -451,7 +452,7 @@ func TestListPatterns_InvalidLimitReturns400(t *testing.T) {
 	t.Run("limit below minimum", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns?limit=0")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns?limit=0", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns?limit=0: %v", err)
 		}
@@ -462,7 +463,7 @@ func TestListPatterns_InvalidLimitReturns400(t *testing.T) {
 	t.Run("limit above maximum", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns?limit=101")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns?limit=101", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns?limit=101: %v", err)
 		}
@@ -473,7 +474,7 @@ func TestListPatterns_InvalidLimitReturns400(t *testing.T) {
 	t.Run("limit non-numeric", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns?limit=abc")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns?limit=abc", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns?limit=abc: %v", err)
 		}
@@ -486,7 +487,7 @@ func TestListPatterns_InvalidLimitReturns400(t *testing.T) {
 func TestListPatterns_InvalidCursorReturns400(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns?cursor=!!!invalid-cursor!!!")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns?cursor=!!!invalid-cursor!!!", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns?cursor=...: %v", err)
 	}
@@ -510,7 +511,7 @@ func TestCreatePattern_ReturnsAcceptedWithPendingEnrichment(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Post("/v1/api/patterns", body)
+	resp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to POST /v1/api/patterns: %v", err)
 	}
@@ -535,7 +536,7 @@ func TestCreatePattern_ResponseIncludesLocationHeader(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Post("/v1/api/patterns", body)
+	resp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to POST /v1/api/patterns: %v", err)
 	}
@@ -564,7 +565,7 @@ func TestCreatePattern_ServerGeneratesUUID(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Post("/v1/api/patterns", body)
+	resp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to POST /v1/api/patterns: %v", err)
 	}
@@ -594,7 +595,7 @@ func TestCreatePattern_MinimalFieldsOnlyNameAndContent(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Post("/v1/api/patterns", body)
+	resp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to POST /v1/api/patterns: %v", err)
 	}
@@ -627,7 +628,7 @@ func TestCreatePattern_AllFieldsIncludingDescriptionAndTags(t *testing.T) {
 		Domain:      "backend",
 	}
 
-	resp, err := client.Post("/v1/api/patterns", body)
+	resp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to POST /v1/api/patterns: %v", err)
 	}
@@ -659,7 +660,7 @@ func TestCreatePattern_DuplicateNameReturns409(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp1, err := client.Post("/v1/api/patterns", body)
+	resp1, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to POST /v1/api/patterns: %v", err)
 	}
@@ -674,7 +675,7 @@ func TestCreatePattern_DuplicateNameReturns409(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	resp2, err := client.Post("/v1/api/patterns", body2)
+	resp2, err := client.Request(http.MethodPost, "/v1/api/patterns", body2)
 	if err != nil {
 		t.Fatalf("failed to POST /v1/api/patterns (duplicate): %v", err)
 	}
@@ -772,7 +773,7 @@ func TestCreatePattern_ValidationErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := helpers.NewTestClient(t)
 
-			resp, err := client.Post("/v1/api/patterns", tc.body)
+			resp, err := client.Request(http.MethodPost, "/v1/api/patterns", tc.body)
 			if err != nil {
 				t.Fatalf("failed to POST /v1/api/patterns: %v", err)
 			}
@@ -839,7 +840,7 @@ func TestCreatePattern_EmptyBodyReturns400(t *testing.T) {
 func TestSearchPatterns_ReturnsRankedResultsWithSimilarity(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns/search?q=error+handling+in+go")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q=error+handling+in+go", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
@@ -854,33 +855,54 @@ func TestSearchPatterns_ReturnsRankedResultsWithSimilarity(t *testing.T) {
 	}
 }
 
-func TestSearchPatterns_ResultsIncludeContentAndScores(t *testing.T) {
+// TestSearchPatterns_QueryParameters checks that each accepted parameter
+// combination returns 200 and that every result honours the requested limit
+// and threshold and carries content and an in-range similarity.
+func TestSearchPatterns_QueryParameters(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns/search?q=test+query+for+content+and+scores")
-	if err != nil {
-		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
-	}
+	for _, tc := range []struct {
+		name          string
+		query         string
+		maxResults    int
+		minSimilarity float64
+	}{
+		{"default limit", "q=default+limit+test", 10, 0},
+		{"custom limit", "q=custom+limit+test&limit=3", 3, 0},
+		{"custom threshold", "q=threshold+test&threshold=0.9", 10, 0.9},
+		{"filter by tags", "q=tag+filtered+search&tags=go,errors", 10, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?"+tc.query, nil)
+			if err != nil {
+				t.Fatalf("failed to GET /v1/api/patterns/search?%s: %v", tc.query, err)
+			}
 
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
+			helpers.AssertStatusCode(t, resp, http.StatusOK)
 
-	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
-
-	// Verify each result has content and similarity (if any results exist)
-	for _, r := range searchResp.Results {
-		if r.Content == "" {
-			t.Errorf("result %q has empty content", r.PatternID)
-		}
-		if r.Similarity < 0 || r.Similarity > 1 {
-			t.Errorf("result %q has similarity %f out of [0,1] range", r.PatternID, r.Similarity)
-		}
+			searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
+			if searchResp.Results == nil {
+				t.Fatal("expected results field to be present (may be empty)")
+			}
+			if len(searchResp.Results) > tc.maxResults {
+				t.Fatalf("expected at most %d results, got %d", tc.maxResults, len(searchResp.Results))
+			}
+			for _, r := range searchResp.Results {
+				if r.Content == "" {
+					t.Errorf("result %q has empty content", r.PatternID)
+				}
+				if r.Similarity < tc.minSimilarity || r.Similarity > 1 {
+					t.Errorf("result %q has similarity %f out of [%g,1]", r.PatternID, r.Similarity, tc.minSimilarity)
+				}
+			}
+		})
 	}
 }
 
 func TestSearchPatterns_ResponseIncludesMetadata(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns/search?q=metadata+test+query")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q=metadata+test+query", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
@@ -902,7 +924,7 @@ func TestSearchPatterns_MetadataEchoesQueryString(t *testing.T) {
 
 	query := "echo this query string back"
 
-	resp, err := client.Get("/v1/api/patterns/search?q=" + strings.ReplaceAll(query, " ", "+"))
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q="+strings.ReplaceAll(query, " ", "+"), nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
@@ -913,79 +935,6 @@ func TestSearchPatterns_MetadataEchoesQueryString(t *testing.T) {
 
 	if searchResp.Metadata.Query != query {
 		t.Fatalf("expected metadata.query to echo %q, got %q", query, searchResp.Metadata.Query)
-	}
-}
-
-func TestSearchPatterns_DefaultLimit(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	resp, err := client.Get("/v1/api/patterns/search?q=default+limit+test")
-	if err != nil {
-		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
-	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
-
-	// Default limit per spec is 10; results should not exceed it
-	if len(searchResp.Results) > 10 {
-		t.Fatalf("expected at most 10 results with default limit, got %d", len(searchResp.Results))
-	}
-}
-
-func TestSearchPatterns_CustomLimit(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	resp, err := client.Get("/v1/api/patterns/search?q=custom+limit+test&limit=3")
-	if err != nil {
-		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
-	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
-
-	if len(searchResp.Results) > 3 {
-		t.Fatalf("expected at most 3 results, got %d", len(searchResp.Results))
-	}
-}
-
-func TestSearchPatterns_CustomThreshold(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	resp, err := client.Get("/v1/api/patterns/search?q=threshold+test&threshold=0.9")
-	if err != nil {
-		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
-	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
-
-	// All results must have similarity >= threshold
-	for _, r := range searchResp.Results {
-		if r.Similarity < 0.9 {
-			t.Errorf("result %q has similarity %f below threshold 0.9", r.PatternID, r.Similarity)
-		}
-	}
-}
-
-func TestSearchPatterns_FilterByTags(t *testing.T) {
-	client := helpers.NewTestClient(t)
-
-	resp, err := client.Get("/v1/api/patterns/search?q=tag+filtered+search&tags=go,errors")
-	if err != nil {
-		t.Fatalf("failed to GET /v1/api/patterns/search?tags=...: %v", err)
-	}
-
-	helpers.AssertStatusCode(t, resp, http.StatusOK)
-
-	searchResp := helpers.ParseJSON[helpers.PatternSearchResponse](t, resp)
-
-	// Verify response structure is valid (no enriched patterns expected)
-	if searchResp.Results == nil {
-		t.Fatal("expected results field to be present")
 	}
 }
 
@@ -1000,7 +949,7 @@ func TestSearchPatterns_OnlyEnrichedPatternsAppear(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1008,7 +957,7 @@ func TestSearchPatterns_OnlyEnrichedPatternsAppear(t *testing.T) {
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
 	// Search for the pattern by its unique name
-	resp, err := client.Get("/v1/api/patterns/search?q=" + strings.ReplaceAll(body.Name, "-", "+"))
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q="+strings.ReplaceAll(body.Name, "-", "+"), nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search: %v", err)
 	}
@@ -1033,7 +982,7 @@ func TestSearchPatterns_OnlyEnrichedPatternsAppear(t *testing.T) {
 func TestSearchPatterns_MissingQueryReturns400(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns/search")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search (no q): %v", err)
 	}
@@ -1045,7 +994,7 @@ func TestSearchPatterns_MissingQueryReturns400(t *testing.T) {
 func TestSearchPatterns_EmptyQueryReturns400(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns/search?q=")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q=", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search?q= (empty): %v", err)
 	}
@@ -1058,7 +1007,7 @@ func TestSearchPatterns_QueryTooLongReturns400(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
 	longQuery := strings.Repeat("a", 1001)
-	resp, err := client.Get("/v1/api/patterns/search?q=" + longQuery)
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q="+longQuery, nil)
 	if err != nil {
 		t.Fatalf("failed to GET /v1/api/patterns/search with long query: %v", err)
 	}
@@ -1071,7 +1020,7 @@ func TestSearchPatterns_InvalidLimitReturns400(t *testing.T) {
 	t.Run("limit below minimum", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns/search?q=test&limit=0")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q=test&limit=0", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns/search?limit=0: %v", err)
 		}
@@ -1082,7 +1031,7 @@ func TestSearchPatterns_InvalidLimitReturns400(t *testing.T) {
 	t.Run("limit above maximum", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns/search?q=test&limit=51")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q=test&limit=51", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns/search?limit=51: %v", err)
 		}
@@ -1096,7 +1045,7 @@ func TestSearchPatterns_InvalidThresholdReturns400(t *testing.T) {
 	t.Run("threshold below zero", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns/search?q=test&threshold=-0.1")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q=test&threshold=-0.1", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns/search?threshold=-0.1: %v", err)
 		}
@@ -1107,7 +1056,7 @@ func TestSearchPatterns_InvalidThresholdReturns400(t *testing.T) {
 	t.Run("threshold above one", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns/search?q=test&threshold=1.1")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns/search?q=test&threshold=1.1", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns/search?threshold=1.1: %v", err)
 		}
@@ -1115,10 +1064,6 @@ func TestSearchPatterns_InvalidThresholdReturns400(t *testing.T) {
 
 		helpers.AssertStatusCode(t, resp, http.StatusBadRequest)
 	})
-}
-
-func TestSearchPatterns_ServiceUnavailableReturns503(t *testing.T) {
-	t.Skip("requires infrastructure manipulation")
 }
 
 // -----------------------------------------------------------------------------
@@ -1135,14 +1080,14 @@ func TestGetPattern_ReturnsFullPatternWithContent(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get(patternPath(created.ID))
+	resp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1172,14 +1117,14 @@ func TestGetPattern_IncludesEnrichmentStatus(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get(patternPath(created.ID))
+	resp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1202,7 +1147,7 @@ func TestGetPattern_NotFoundReturns404(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
 	nonExistentID := uuid.New().String()
-	resp, err := client.Get(patternPath(nonExistentID))
+	resp, err := client.Request(http.MethodGet, patternPath(nonExistentID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(nonExistentID), err)
 	}
@@ -1215,7 +1160,7 @@ func TestGetPattern_InvalidUUIDReturns400(t *testing.T) {
 	t.Run("not a uuid", func(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
-		resp, err := client.Get("/v1/api/patterns/not-a-uuid")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns/not-a-uuid", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns/not-a-uuid: %v", err)
 		}
@@ -1227,7 +1172,7 @@ func TestGetPattern_InvalidUUIDReturns400(t *testing.T) {
 		client := helpers.NewTestClient(t)
 
 		// This routes to the list endpoint, not an invalid UUID — verify 200 not 400
-		resp, err := client.Get("/v1/api/patterns/")
+		resp, err := client.Request(http.MethodGet, "/v1/api/patterns/", nil)
 		if err != nil {
 			t.Fatalf("failed to GET /v1/api/patterns/: %v", err)
 		}
@@ -1251,14 +1196,14 @@ func TestGetPattern_ResponseIncludesRequestIDHeader(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get(patternPath(created.ID))
+	resp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1282,7 +1227,7 @@ func TestUpdatePattern_ReturnsNoContent(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", createBody)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", createBody)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1297,7 +1242,7 @@ func TestUpdatePattern_ReturnsNoContent(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Put(patternPath(created.ID), updateBody)
+	resp, err := client.Request(http.MethodPut, patternPath(created.ID), updateBody)
 	if err != nil {
 		t.Fatalf("failed to PUT %s: %v", patternPath(created.ID), err)
 	}
@@ -1316,7 +1261,7 @@ func TestUpdatePattern_UpdatedAtChangesCreatedAtPreserved(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", createBody)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", createBody)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1331,7 +1276,7 @@ func TestUpdatePattern_UpdatedAtChangesCreatedAtPreserved(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Put(patternPath(created.ID), updateBody)
+	resp, err := client.Request(http.MethodPut, patternPath(created.ID), updateBody)
 	if err != nil {
 		t.Fatalf("failed to PUT %s: %v", patternPath(created.ID), err)
 	}
@@ -1352,7 +1297,7 @@ func TestUpdatePattern_FullReplacementResetsOmittedFields(t *testing.T) {
 		Language:    "go",
 		Domain:      "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", createBody)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", createBody)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1368,7 +1313,7 @@ func TestUpdatePattern_FullReplacementResetsOmittedFields(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Put(patternPath(created.ID), updateBody)
+	resp, err := client.Request(http.MethodPut, patternPath(created.ID), updateBody)
 	if err != nil {
 		t.Fatalf("failed to PUT %s: %v", patternPath(created.ID), err)
 	}
@@ -1387,7 +1332,7 @@ func TestUpdatePattern_ContentChangeResetsEnrichmentToPending(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", createBody)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", createBody)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1402,7 +1347,7 @@ func TestUpdatePattern_ContentChangeResetsEnrichmentToPending(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Put(patternPath(created.ID), updateBody)
+	resp, err := client.Request(http.MethodPut, patternPath(created.ID), updateBody)
 	if err != nil {
 		t.Fatalf("failed to PUT %s: %v", patternPath(created.ID), err)
 	}
@@ -1423,7 +1368,7 @@ func TestUpdatePattern_NotFoundReturns404(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Put(patternPath(nonExistentID), updateBody)
+	resp, err := client.Request(http.MethodPut, patternPath(nonExistentID), updateBody)
 	if err != nil {
 		t.Fatalf("failed to PUT %s: %v", patternPath(nonExistentID), err)
 	}
@@ -1519,14 +1464,14 @@ func TestUpdatePattern_ValidationErrors(t *testing.T) {
 				Language:   "go",
 				Domain:     "backend",
 			}
-			createResp, err := client.Post("/v1/api/patterns", createBody)
+			createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", createBody)
 			if err != nil {
 				t.Fatalf("failed to create pattern: %v", err)
 			}
 			helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 			created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-			resp, err := client.Put(patternPath(created.ID), tc.body)
+			resp, err := client.Request(http.MethodPut, patternPath(created.ID), tc.body)
 			if err != nil {
 				t.Fatalf("failed to PUT %s: %v", patternPath(created.ID), err)
 			}
@@ -1563,7 +1508,7 @@ func TestUpdatePattern_InvalidUUIDReturns400(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Put("/v1/api/patterns/not-a-valid-uuid", updateBody)
+	resp, err := client.Request(http.MethodPut, "/v1/api/patterns/not-a-valid-uuid", updateBody)
 	if err != nil {
 		t.Fatalf("failed to PUT /v1/api/patterns/not-a-valid-uuid: %v", err)
 	}
@@ -1586,14 +1531,14 @@ func TestDeletePattern_ReturnsNoContent(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Delete(patternPath(created.ID))
+	resp, err := client.Request(http.MethodDelete, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to DELETE %s: %v", patternPath(created.ID), err)
 	}
@@ -1612,21 +1557,21 @@ func TestDeletePattern_PatternNoLongerRetrievable(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	deleteResp, err := client.Delete(patternPath(created.ID))
+	deleteResp, err := client.Request(http.MethodDelete, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to DELETE %s: %v", patternPath(created.ID), err)
 	}
 	deleteResp.Body.Close()
 	helpers.AssertStatusCode(t, deleteResp, http.StatusNoContent)
 
-	getResp, err := client.Get(patternPath(created.ID))
+	getResp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s after delete: %v", patternPath(created.ID), err)
 	}
@@ -1639,7 +1584,7 @@ func TestDeletePattern_NotFoundReturns404(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
 	nonExistentID := uuid.New().String()
-	resp, err := client.Delete(patternPath(nonExistentID))
+	resp, err := client.Request(http.MethodDelete, patternPath(nonExistentID), nil)
 	if err != nil {
 		t.Fatalf("failed to DELETE %s: %v", patternPath(nonExistentID), err)
 	}
@@ -1658,7 +1603,7 @@ func TestDeletePattern_SecondDeleteReturns404(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1666,7 +1611,7 @@ func TestDeletePattern_SecondDeleteReturns404(t *testing.T) {
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
 	// First delete
-	resp1, err := client.Delete(patternPath(created.ID))
+	resp1, err := client.Request(http.MethodDelete, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed first DELETE %s: %v", patternPath(created.ID), err)
 	}
@@ -1674,7 +1619,7 @@ func TestDeletePattern_SecondDeleteReturns404(t *testing.T) {
 	helpers.AssertStatusCode(t, resp1, http.StatusNoContent)
 
 	// Second delete should return 404
-	resp2, err := client.Delete(patternPath(created.ID))
+	resp2, err := client.Request(http.MethodDelete, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed second DELETE %s: %v", patternPath(created.ID), err)
 	}
@@ -1686,7 +1631,7 @@ func TestDeletePattern_SecondDeleteReturns404(t *testing.T) {
 func TestDeletePattern_InvalidUUIDReturns400(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Delete("/v1/api/patterns/not-a-valid-uuid")
+	resp, err := client.Request(http.MethodDelete, "/v1/api/patterns/not-a-valid-uuid", nil)
 	if err != nil {
 		t.Fatalf("failed to DELETE /v1/api/patterns/not-a-valid-uuid: %v", err)
 	}
@@ -1710,7 +1655,7 @@ func TestPatternEnrichment_NewPatternStartsWithPendingStatus(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	resp, err := client.Post("/v1/api/patterns", body)
+	resp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1735,14 +1680,14 @@ func TestPatternEnrichment_StatusTransitionsToPendingOrFailed(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get(patternPath(created.ID))
+	resp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1764,14 +1709,14 @@ func TestPatternEnrichment_EnrichedAtSetWhenEnriched(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get(patternPath(created.ID))
+	resp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1796,14 +1741,14 @@ func TestPatternEnrichment_ErrorSetWhenFailed(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get(patternPath(created.ID))
+	resp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1824,7 +1769,7 @@ func TestPatternEnrichment_ContentUpdateTriggersReenrichment(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", createBody)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", createBody)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
@@ -1840,7 +1785,7 @@ func TestPatternEnrichment_ContentUpdateTriggersReenrichment(t *testing.T) {
 		Domain:     "backend",
 	}
 
-	updateResp, err := client.Put(patternPath(created.ID), updateBody)
+	updateResp, err := client.Request(http.MethodPut, patternPath(created.ID), updateBody)
 	if err != nil {
 		t.Fatalf("failed to PUT %s: %v", patternPath(created.ID), err)
 	}
@@ -1848,7 +1793,7 @@ func TestPatternEnrichment_ContentUpdateTriggersReenrichment(t *testing.T) {
 	helpers.AssertStatusCode(t, updateResp, http.StatusNoContent)
 	helpers.ReadBody(t, updateResp)
 
-	getResp, err := client.Get(patternPath(created.ID))
+	getResp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1884,14 +1829,14 @@ func TestGetPatternChunks_ReturnsChunksForPattern(t *testing.T) {
 		Language:   "go",
 		Domain:     "backend",
 	}
-	createResp, err := client.Post("/v1/api/patterns", body)
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", body)
 	if err != nil {
 		t.Fatalf("failed to create pattern: %v", err)
 	}
 	helpers.AssertStatusCode(t, createResp, http.StatusAccepted)
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
-	resp, err := client.Get("/v1/api/patterns/" + created.ID + "/chunks")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/"+created.ID+"/chunks", nil)
 	if err != nil {
 		t.Fatalf("failed to GET chunks: %v", err)
 	}
@@ -1931,7 +1876,7 @@ func TestUpdatePattern_ReplacesChunks(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
 	name := helpers.GenerateUniqueName("pattern")
-	createResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", helpers.PatternCreate{
 		Name:       name,
 		Content:    decoratedTwoSections,
 		EntityType: "go-pattern",
@@ -1945,11 +1890,11 @@ func TestUpdatePattern_ReplacesChunks(t *testing.T) {
 	created := helpers.ParseJSON[helpers.Pattern](t, createResp)
 
 	before := getChunkTitles(t, client, created.ID)
-	if got := []string{"Philosophy", "Usage"}; !equalStrings(before, got) {
+	if got := []string{"Philosophy", "Usage"}; !slices.Equal(before, got) {
 		t.Fatalf("precondition failed: expected %v before update, got %v", got, before)
 	}
 
-	updateResp, err := client.Put(patternPath(created.ID), helpers.PatternUpdate{
+	updateResp, err := client.Request(http.MethodPut, patternPath(created.ID), helpers.PatternUpdate{
 		Name:       name,
 		Content:    decoratedThreeSections,
 		EntityType: "go-pattern",
@@ -1964,7 +1909,7 @@ func TestUpdatePattern_ReplacesChunks(t *testing.T) {
 
 	after := getChunkTitles(t, client, created.ID)
 	want := []string{"Rationale", "Limits", "Recovery"}
-	if !equalStrings(after, want) {
+	if !slices.Equal(after, want) {
 		t.Fatalf("expected chunks replaced with %v, got %v", want, after)
 	}
 
@@ -1977,7 +1922,7 @@ func TestUpdatePattern_ReplacesChunks(t *testing.T) {
 		}
 	}
 
-	getResp, err := client.Get(patternPath(created.ID))
+	getResp, err := client.Request(http.MethodGet, patternPath(created.ID), nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", patternPath(created.ID), err)
 	}
@@ -1989,7 +1934,7 @@ func TestUpdatePattern_ReplacesChunks(t *testing.T) {
 
 func getChunkTitles(t *testing.T, client *helpers.TestClient, patternID string) []string {
 	t.Helper()
-	resp, err := client.Get("/v1/api/patterns/" + patternID + "/chunks")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/"+patternID+"/chunks", nil)
 	if err != nil {
 		t.Fatalf("failed to GET chunks: %v", err)
 	}
@@ -2000,18 +1945,6 @@ func getChunkTitles(t *testing.T, client *helpers.TestClient, patternID string) 
 		titles[i] = c.SectionTitle
 	}
 	return titles
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // overlongSectionTitle exceeds pattern_chunks.section_title (varchar(255)), so
@@ -2036,7 +1969,7 @@ func TestCreatePattern_FailedWriteLeavesNothingPersisted(t *testing.T) {
 	client := helpers.NewTestClient(t)
 	name := helpers.GenerateUniqueName("rollback")
 
-	failResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+	failResp, err := client.Request(http.MethodPost, "/v1/api/patterns", helpers.PatternCreate{
 		Name:       name,
 		Content:    overlongSectionTitle(),
 		EntityType: "go-pattern",
@@ -2052,7 +1985,7 @@ func TestCreatePattern_FailedWriteLeavesNothingPersisted(t *testing.T) {
 	// The decisive check: the same name must be free. A pattern row surviving
 	// the failure would answer 409 here, which is exactly the dead end H4
 	// describes.
-	retryResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+	retryResp, err := client.Request(http.MethodPost, "/v1/api/patterns", helpers.PatternCreate{
 		Name:       name,
 		Content:    decoratedTwoSections,
 		EntityType: "go-pattern",
@@ -2069,7 +2002,7 @@ func TestCreatePattern_FailedWriteLeavesNothingPersisted(t *testing.T) {
 	created := helpers.ParseJSON[helpers.Pattern](t, retryResp)
 
 	// And the retry is a complete pattern, not a repair of a half-written one.
-	if got := getChunkTitles(t, client, created.ID); !equalStrings(got, []string{"Philosophy", "Usage"}) {
+	if got := getChunkTitles(t, client, created.ID); !slices.Equal(got, []string{"Philosophy", "Usage"}) {
 		t.Fatalf("expected the retry to write both chunks, got %v", got)
 	}
 }
@@ -2082,7 +2015,7 @@ func TestUpdatePattern_FailedWriteLeavesPriorStateIntact(t *testing.T) {
 	client := helpers.NewTestClient(t)
 	name := helpers.GenerateUniqueName("rollback-update")
 
-	createResp, err := client.Post("/v1/api/patterns", helpers.PatternCreate{
+	createResp, err := client.Request(http.MethodPost, "/v1/api/patterns", helpers.PatternCreate{
 		Name:       name,
 		Content:    decoratedTwoSections,
 		EntityType: "go-pattern",
@@ -2097,7 +2030,7 @@ func TestUpdatePattern_FailedWriteLeavesPriorStateIntact(t *testing.T) {
 
 	before := helpers.ParseJSON[helpers.Pattern](t, mustGet(t, client, patternPath(created.ID)))
 
-	failResp, err := client.Put(patternPath(created.ID), helpers.PatternUpdate{
+	failResp, err := client.Request(http.MethodPut, patternPath(created.ID), helpers.PatternUpdate{
 		Name:       name,
 		Content:    overlongSectionTitle(),
 		EntityType: "go-pattern",
@@ -2120,14 +2053,14 @@ func TestUpdatePattern_FailedWriteLeavesPriorStateIntact(t *testing.T) {
 
 	// The stale chunks must still be there. This is what a committed partial
 	// update would destroy.
-	if got := getChunkTitles(t, client, created.ID); !equalStrings(got, []string{"Philosophy", "Usage"}) {
+	if got := getChunkTitles(t, client, created.ID); !slices.Equal(got, []string{"Philosophy", "Usage"}) {
 		t.Fatalf("expected the original chunks to survive, got %v", got)
 	}
 }
 
 func mustGet(t *testing.T, client *helpers.TestClient, path string) *http.Response {
 	t.Helper()
-	resp, err := client.Get(path)
+	resp, err := client.Request(http.MethodGet, path, nil)
 	if err != nil {
 		t.Fatalf("failed to GET %s: %v", path, err)
 	}
@@ -2138,7 +2071,7 @@ func mustGet(t *testing.T, client *helpers.TestClient, path string) *http.Respon
 func TestGetPatternChunks_InvalidUUIDReturns400(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/v1/api/patterns/not-a-uuid/chunks")
+	resp, err := client.Request(http.MethodGet, "/v1/api/patterns/not-a-uuid/chunks", nil)
 	if err != nil {
 		t.Fatalf("failed to GET chunks: %v", err)
 	}
@@ -2164,29 +2097,3 @@ func makeTags(n int) []string {
 func patternPath(id string) string {
 	return fmt.Sprintf("/v1/api/patterns/%s", id)
 }
-
-// Compile-time interface assertions to ensure test types from types.go are used.
-// These prevent the types from appearing unused if no test body references them yet.
-var (
-	_ = helpers.PatternCreate{}
-	_ = helpers.PatternUpdate{}
-	_ = helpers.PatternList{}
-	_ = helpers.PatternSearchResponse{}
-	_ = helpers.Pattern{}
-	_ = helpers.ErrorResponse{}
-	_ = helpers.ChunkListResponse{}
-)
-
-// Compile-time assertions for helpers, uuid, http, and strings packages.
-var (
-	_ = helpers.NewTestClient
-	_ = helpers.NewReadOnlyTestClient
-	_ = helpers.NewUnauthenticatedClient
-	_ = helpers.AssertStatusCode
-	_ = helpers.AssertContentType
-	_ = helpers.AssertRequestIDHeader
-	_ = helpers.GenerateUniqueName
-	_ = uuid.New
-	_ = http.StatusOK
-	_ = strings.Repeat
-)

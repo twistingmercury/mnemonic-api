@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
+	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/patterns"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	patternrepo "github.com/twistingmercury/mnemonic-api/internal/repository/pattern"
@@ -217,172 +218,57 @@ func TestPatternCreate_BadRequest(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestPatternCreate_InvalidEntityType(t *testing.T) {
+// TestPatternWrite_InvalidFields checks that create and update reject an
+// invalid field with a 400 naming the field and the failed rule.
+func TestPatternWrite_InvalidFields(t *testing.T) {
 	t.Parallel()
-	psvc := new(mockPatternService)
-	ssvc := new(mockSearchService)
-	router := newTestRouter(psvc, ssvc)
 
-	body := `{
-		"name": "go-error-handling",
-		"content": "# Test Pattern\n\nContent here",
-		"entity_type": "Invalid Type",
-		"language": "go",
-		"domain": "backend"
-	}`
+	const createPath = "/v1/api/patterns"
+	updatePath := "/v1/api/patterns/" + uuid.New().String()
+	body := func(entityType, language, domain string) string {
+		return fmt.Sprintf(`{
+			"name": "go-error-handling",
+			"content": "# Test Pattern\n\nContent here",
+			"entity_type": %q,
+			"language": %q,
+			"domain": %q
+		}`, entityType, language, domain)
+	}
 
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/api/patterns", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	tests := []struct {
+		name      string
+		method    string
+		path      string
+		body      string
+		wantField string
+		wantCode  string
+	}{
+		{"create entity_type not kebab-case", http.MethodPost, createPath, body("Invalid Type", "go", "backend"), "entity_type", "INVALID_FORMAT"},
+		{"create language not kebab-case", http.MethodPost, createPath, body("go-pattern", "INVALID_LANG", "backend"), "language", "INVALID_FORMAT"},
+		{"create language not allowed", http.MethodPost, createPath, body("go-pattern", "brainfuck", "backend"), "language", "INVALID_VALUE"},
+		{"create domain not allowed", http.MethodPost, createPath, body("go-pattern", "go", "not-a-valid-domain"), "domain", "INVALID_VALUE"},
+		{"update language not allowed", http.MethodPut, updatePath, body("go-pattern", "brainfuck", "backend"), "language", "INVALID_VALUE"},
+		{"update domain not allowed", http.MethodPut, updatePath, body("go-pattern", "go", "not-a-valid-domain"), "domain", "INVALID_VALUE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// No service expectations: an invalid body must never reach it.
+			router := newTestRouter(new(mockPatternService), new(mockSearchService))
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
 
-func TestPatternCreate_InvalidLanguage(t *testing.T) {
-	t.Parallel()
-	psvc := new(mockPatternService)
-	ssvc := new(mockSearchService)
-	router := newTestRouter(psvc, ssvc)
-
-	body := `{
-		"name": "go-error-handling",
-		"content": "# Test Pattern\n\nContent here",
-		"entity_type": "go-pattern",
-		"language": "INVALID_LANG",
-		"domain": "backend"
-	}`
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/api/patterns", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestPatternCreate_InvalidLanguageValue(t *testing.T) {
-	t.Parallel()
-	psvc := new(mockPatternService)
-	ssvc := new(mockSearchService)
-	router := newTestRouter(psvc, ssvc)
-
-	body := `{
-		"name": "go-error-handling",
-		"content": "# Test Pattern\n\nContent here",
-		"entity_type": "go-pattern",
-		"language": "brainfuck",
-		"domain": "backend"
-	}`
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/api/patterns", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	errs := resp["errors"].([]any)
-	require.NotEmpty(t, errs)
-	first := errs[0].(map[string]any)
-	assert.Equal(t, "language", first["field"])
-	assert.Equal(t, "INVALID_VALUE", first["code"])
-}
-
-func TestPatternCreate_InvalidDomainValue(t *testing.T) {
-	t.Parallel()
-	psvc := new(mockPatternService)
-	ssvc := new(mockSearchService)
-	router := newTestRouter(psvc, ssvc)
-
-	body := `{
-		"name": "go-error-handling",
-		"content": "# Test Pattern\n\nContent here",
-		"entity_type": "go-pattern",
-		"language": "go",
-		"domain": "not-a-valid-domain"
-	}`
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/api/patterns", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	errs := resp["errors"].([]any)
-	require.NotEmpty(t, errs)
-	first := errs[0].(map[string]any)
-	assert.Equal(t, "domain", first["field"])
-	assert.Equal(t, "INVALID_VALUE", first["code"])
-}
-
-func TestPatternUpdate_InvalidLanguageValue(t *testing.T) {
-	t.Parallel()
-	psvc := new(mockPatternService)
-	ssvc := new(mockSearchService)
-	router := newTestRouter(psvc, ssvc)
-
-	id := uuid.New()
-
-	body := `{
-		"name": "go-error-handling",
-		"content": "# Test Pattern\n\nContent here",
-		"entity_type": "go-pattern",
-		"language": "brainfuck",
-		"domain": "backend"
-	}`
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/v1/api/patterns/"+id.String(), bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	errs := resp["errors"].([]any)
-	require.NotEmpty(t, errs)
-	first := errs[0].(map[string]any)
-	assert.Equal(t, "language", first["field"])
-	assert.Equal(t, "INVALID_VALUE", first["code"])
-}
-
-func TestPatternUpdate_InvalidDomainValue(t *testing.T) {
-	t.Parallel()
-	psvc := new(mockPatternService)
-	ssvc := new(mockSearchService)
-	router := newTestRouter(psvc, ssvc)
-
-	id := uuid.New()
-
-	body := `{
-		"name": "go-error-handling",
-		"content": "# Test Pattern\n\nContent here",
-		"entity_type": "go-pattern",
-		"language": "go",
-		"domain": "not-a-valid-domain"
-	}`
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/v1/api/patterns/"+id.String(), bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	errs := resp["errors"].([]any)
-	require.NotEmpty(t, errs)
-	first := errs[0].(map[string]any)
-	assert.Equal(t, "domain", first["field"])
-	assert.Equal(t, "INVALID_VALUE", first["code"])
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			var resp handlers.ProblemDetail
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			require.NotEmpty(t, resp.Errors)
+			assert.Equal(t, tt.wantField, resp.Errors[0].Field)
+			assert.Equal(t, tt.wantCode, resp.Errors[0].Code)
+		})
+	}
 }
 
 func TestPatternGet_Success(t *testing.T) {

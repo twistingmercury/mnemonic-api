@@ -159,7 +159,7 @@ func TestIntegration_UpdateResetsEnrichedParent(t *testing.T) {
 		enriched bool
 	}{
 		{name: "enriched parent", status: "enriched", enriched: true},
-		{name: "failed parent", status: "failed", errMsg: ptr("embedding provider rejected the request")},
+		{name: "failed parent", status: "failed", errMsg: new("embedding provider rejected the request")},
 	} {
 		t.Run(seeded.name, func(t *testing.T) {
 			patternName := uniqueName(t)
@@ -276,5 +276,3 @@ func TestIntegration_CreateBatchesChunksAndJobs(t *testing.T) {
 		assert.Empty(t, c.Content, "summaries never load content")
 	}
 }
-
-func ptr[T any](v T) *T { return &v }

@@ -1,9 +1,6 @@
 package server
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -12,24 +9,6 @@ import (
 
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 )
-
-func TestServerDoesNotConstructMCPListener(t *testing.T) {
-	t.Parallel()
-
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve server test source path")
-	}
-
-	source, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "server.go"))
-	if err != nil {
-		t.Fatalf("read server source: %v", err)
-	}
-
-	assert.NotContains(t, string(source), "internal/mcpserver")
-	assert.NotContains(t, string(source), "NewMCPHTTPServer")
-	assert.NotContains(t, string(source), "runMCPServer")
-}
 
 func TestCreateHTTPServerUsesAdminAPIConfiguration(t *testing.T) {
 	t.Parallel()

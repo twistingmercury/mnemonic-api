@@ -35,11 +35,6 @@ func testEmbedding() []float32 {
 	return emb
 }
 
-// ptr is a helper to create a pointer to any value.
-func ptr[T any](v T) *T {
-	return &v
-}
-
 func TestRepository_ListSummariesByPatternID(t *testing.T) {
 	t.Parallel()
 

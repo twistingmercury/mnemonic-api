@@ -72,10 +72,9 @@ func cleanupTestPatterns(t *testing.T, pool *pgxpool.Pool) {
 
 // testIntegrationPattern creates a sample pattern for integration testing with a unique name.
 func testIntegrationPattern(suffix string) *pattern.Pattern {
-	desc := "Integration test pattern: " + suffix
 	return &pattern.Pattern{
 		Name:        testPatternPrefix + suffix,
-		Description: &desc,
+		Description: new("Integration test pattern: " + suffix),
 		Content:     "This is test content for integration testing. It should be stored correctly.",
 		Tags:        []string{"test", "integration"},
 	}
