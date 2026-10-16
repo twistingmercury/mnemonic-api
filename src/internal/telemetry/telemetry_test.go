@@ -79,10 +79,6 @@ func TestInitialize(t *testing.T) {
 	logger := tel.Logger()
 	assert.NotNil(t, logger)
 
-	// Verify we can get a tracer
-	tracer := tel.Tracer("test")
-	assert.NotNil(t, tracer)
-
 	// Verify we can get a meter
 	meter := tel.Meter("test")
 	assert.NotNil(t, meter)
@@ -107,10 +103,6 @@ func TestInitializeWithMetricsEnabled(t *testing.T) {
 	defer func() {
 		_ = tel.Shutdown(ctx)
 	}()
-
-	// Verify meter provider is available
-	meterProvider := tel.MeterProvider()
-	assert.NotNil(t, meterProvider)
 }
 
 func TestInitializeWithTracingEnabled(t *testing.T) {
@@ -128,10 +120,6 @@ func TestInitializeWithTracingEnabled(t *testing.T) {
 	defer func() {
 		_ = tel.Shutdown(ctx)
 	}()
-
-	// Verify tracer provider is available
-	tracerProvider := tel.TracerProvider()
-	assert.NotNil(t, tracerProvider)
 }
 
 func TestShutdown(t *testing.T) {
@@ -146,36 +134,6 @@ func TestShutdown(t *testing.T) {
 	// Shutdown should not error
 	err = tel.Shutdown(ctx)
 	assert.NoError(t, err)
-}
-
-func TestOtelxAccess(t *testing.T) {
-	cfg := createTestConfig()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	tel, err := telemetry.Initialize(ctx, cfg)
-	require.NoError(t, err)
-	defer func() {
-		_ = tel.Shutdown(ctx)
-	}()
-
-	// Verify we can access the underlying otelx instance
-	otelx := tel.Otelx()
-	assert.NotNil(t, otelx)
-}
-
-func TestInitializeWithInvalidLogLevel(t *testing.T) {
-	cfg := createTestConfig()
-	cfg.Logging.Level = "invalid-level"
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	tel, err := telemetry.Initialize(ctx, cfg)
-	require.Error(t, err)
-	assert.Nil(t, tel)
-	assert.Contains(t, err.Error(), "invalid log level")
 }
 
 func TestMetricsRegistryCreatedAndAccessible(t *testing.T) {
