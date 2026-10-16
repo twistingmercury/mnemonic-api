@@ -18,11 +18,9 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/patterns"
-	"github.com/twistingmercury/mnemonic-api/internal/middleware"
 	"github.com/twistingmercury/mnemonic-api/internal/service"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -76,10 +74,9 @@ func TestProductionHTTPObservability(t *testing.T) {
 			reader := sdkmetric.NewManualReader()
 			mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 			t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
-			rm, err := middleware.NewRequestMetrics(mp.Meter("test"))
-			require.NoError(t, err)
+			useMeterProvider(t, mp)
 			var logs bytes.Buffer
-			router := setupRouter(zerolog.New(&logs), rm)
+			router := setupRouter(zerolog.New(&logs))
 			var active trace.SpanContext
 			router.Use(func(c *gin.Context) { active = trace.SpanContextFromContext(c.Request.Context()); c.Next() })
 			if tc.panic {
@@ -210,44 +207,46 @@ func TestProductionHTTPObservability(t *testing.T) {
 	}
 }
 
+// useMeterProvider installs mp as the global meter provider for the test, the
+// way otelx does in production, so otelgin records into it.
+func useMeterProvider(t *testing.T, mp *sdkmetric.MeterProvider) {
+	t.Helper()
+	old := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(old) })
+}
+
+// assertCompletionMetrics checks that otelgin recorded exactly one
+// http.server.request.duration observation for the search route with status,
+// plus one 200 for each of successRoutes.
 func assertCompletionMetrics(t *testing.T, data metricdata.ResourceMetrics, status int, successRoutes ...string) {
 	t.Helper()
-	expected := attribute.NewSet(attribute.String("http.method", "GET"), attribute.String("http.route", "/v1/api/patterns/search"), attribute.String("http.status_code", fmt.Sprint(status)))
-	expectedSeries := map[attribute.Distinct]bool{expected.Equivalent(): true}
-	for _, route := range successRoutes {
-		labels := attribute.NewSet(attribute.String("http.method", "GET"), attribute.String("http.route", route), attribute.String("http.status_code", "200"))
-		expectedSeries[labels.Equivalent()] = true
+	type series struct {
+		route  string
+		status int64
 	}
-	found := map[string]bool{}
+	want := map[series]bool{{"/v1/api/patterns/search", int64(status)}: true}
+	for _, route := range successRoutes {
+		want[series{route, http.StatusOK}] = true
+	}
+	var found bool
 	for _, scope := range data.ScopeMetrics {
 		for _, m := range scope.Metrics {
-			found[m.Name] = true
-			switch m.Name {
-			case "mnemonic.http.request.count":
-				assert.Equal(t, "{request}", m.Unit)
-				sum := m.Data.(metricdata.Sum[int64])
-				require.Len(t, sum.DataPoints, len(expectedSeries))
-				for _, point := range sum.DataPoints {
-					assert.True(t, expectedSeries[point.Attributes.Equivalent()], "unexpected count series: %v", point.Attributes)
-					assert.EqualValues(t, 1, point.Value)
-				}
-			case "mnemonic.http.request.duration":
-				assert.Equal(t, "ms", m.Unit)
-				hist := m.Data.(metricdata.Histogram[float64])
-				require.Len(t, hist.DataPoints, len(expectedSeries))
-				for _, point := range hist.DataPoints {
-					assert.True(t, expectedSeries[point.Attributes.Equivalent()], "unexpected duration series: %v", point.Attributes)
-					assert.EqualValues(t, 1, point.Count)
-					assert.GreaterOrEqual(t, point.Sum, float64(0))
-				}
-			case "mnemonic.http.request.in_flight":
-				sum := m.Data.(metricdata.Sum[int64])
-				require.Len(t, sum.DataPoints, 1)
-				assert.Zero(t, sum.DataPoints[0].Value)
+			if m.Name != "http.server.request.duration" {
+				continue
+			}
+			found = true
+			hist := m.Data.(metricdata.Histogram[float64])
+			require.Len(t, hist.DataPoints, len(want))
+			for _, point := range hist.DataPoints {
+				route, _ := point.Attributes.Value("http.route")
+				code, _ := point.Attributes.Value("http.response.status_code")
+				assert.True(t, want[series{route.AsString(), code.AsInt64()}], "unexpected duration series: %v", point.Attributes)
+				assert.EqualValues(t, 1, point.Count)
 			}
 		}
 	}
-	assert.Len(t, found, 3)
+	assert.True(t, found, "otelgin should record http.server.request.duration")
 }
 
 // TestRequestIDBoundedAlphabet pins the documented X-Request-ID contract: echo an
@@ -273,10 +272,9 @@ func TestRequestIDBoundedAlphabet(t *testing.T) {
 			reader := sdkmetric.NewManualReader()
 			mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 			t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
-			rm, err := middleware.NewRequestMetrics(mp.Meter("test"))
-			require.NoError(t, err)
+			useMeterProvider(t, mp)
 			var logs bytes.Buffer
-			router := setupRouter(zerolog.New(&logs), rm)
+			router := setupRouter(zerolog.New(&logs))
 			router.GET("/echo", func(c *gin.Context) { c.Status(http.StatusOK) })
 			req := httptest.NewRequest(http.MethodGet, "/echo", nil)
 			if tc.header != "" {
@@ -310,10 +308,9 @@ func TestProductionHTTPNoTraceAndSkips(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
-	rm, err := middleware.NewRequestMetrics(mp.Meter("test"))
-	require.NoError(t, err)
+	useMeterProvider(t, mp)
 	var logs bytes.Buffer
-	router := setupRouter(zerolog.New(&logs), rm)
+	router := setupRouter(zerolog.New(&logs))
 	router.GET("/health", func(c *gin.Context) { c.Status(200) })
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest("GET", "/health", nil))
@@ -347,9 +344,7 @@ func TestTracingSkipsHealth(t *testing.T) {
 		otel.SetTracerProvider(oldTP)
 		require.NoError(t, tp.Shutdown(context.Background()))
 	})
-	rm, err := middleware.NewRequestMetrics(otel.Meter("test"))
-	require.NoError(t, err)
-	router := setupRouter(zerolog.Nop(), rm)
+	router := setupRouter(zerolog.Nop())
 	for _, path := range []string{"/health", "/v1/api/thing"} {
 		router.GET(path, func(c *gin.Context) { c.Status(http.StatusOK) })
 	}

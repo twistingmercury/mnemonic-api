@@ -83,14 +83,8 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 		}
 	}()
 
-	// Create request metrics middleware.
-	requestMetrics, err := middleware.NewRequestMetrics(otel.Meter("mnemonic/http"))
-	if err != nil {
-		return fmt.Errorf("failed to create request metrics: %w", err)
-	}
-
 	// Build the Admin API router.
-	router := setupRouter(logger, requestMetrics)
+	router := setupRouter(logger)
 	operations.SetupHandlers(router, health.Descriptors(health.Dependencies{
 		PGPool:      pgPool,
 		Neo4jDriver: neo4jDriver,
@@ -236,7 +230,7 @@ func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicCo
 }
 
 // setupRouter creates and configures the Gin router with middleware.
-func setupRouter(logger zerolog.Logger, requestMetrics *middleware.RequestMetrics) *gin.Engine {
+func setupRouter(logger zerolog.Logger) *gin.Engine {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		// Only a bounded identifier alphabet may enter headers and private logs.
@@ -262,7 +256,6 @@ func setupRouter(logger zerolog.Logger, requestMetrics *middleware.RequestMetric
 		return !slices.Contains(skipPaths, r.URL.Path)
 	})))
 	router.Use(middleware.CompletionLogging(logger, skipPaths))
-	router.Use(requestMetrics.MiddlewareWithSkipPaths(skipPaths))
 	// Recovery must be inside every completion wrapper. Do not use Gin's default
 	// recovery, which prints raw panic values and request headers to stderr.
 	router.Use(func(c *gin.Context) {
