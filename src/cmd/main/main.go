@@ -35,7 +35,7 @@ func main() {
 	}
 
 	if showVersion, _ := flags.GetBool("version"); showVersion {
-		println(version.Print())
+		fmt.Println(version.Print())
 		os.Exit(0)
 	}
 
