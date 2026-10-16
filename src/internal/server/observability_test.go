@@ -314,14 +314,10 @@ func TestProductionHTTPNoTraceAndSkips(t *testing.T) {
 	require.NoError(t, err)
 	var logs bytes.Buffer
 	router := setupRouter(zerolog.New(&logs), rm)
-	for _, path := range []string{"/health", "/metrics"} {
-		router.GET(path, func(c *gin.Context) { c.Status(200) })
-	}
-	for _, path := range []string{"/health", "/metrics"} {
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		assert.Equal(t, 200, w.Code)
-	}
+	router.GET("/health", func(c *gin.Context) { c.Status(200) })
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/health", nil))
+	assert.Equal(t, 200, w.Code)
 	assert.Empty(t, logs.String())
 	var data metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &data))
@@ -329,7 +325,7 @@ func TestProductionHTTPNoTraceAndSkips(t *testing.T) {
 	router.GET("/failure", func(c *gin.Context) { handlers.RespondError(c, errors.New("failure")) })
 	req := httptest.NewRequest("GET", "/failure", nil)
 	req.Header.Set("X-Request-ID", strings.Repeat("x", 129))
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	var problem handlers.ProblemDetail
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem))
@@ -338,4 +334,32 @@ func TestProductionHTTPNoTraceAndSkips(t *testing.T) {
 	assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
 	assert.Len(t, w.Header().Get("X-Request-ID"), 36)
 	assert.NotContains(t, logs.String(), "trace_id")
+}
+
+// TestTracingSkipsHealth verifies that a normal route records a server span
+// and the /health probe does not.
+func TestTracingSkipsHealth(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	oldTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(oldTP)
+		require.NoError(t, tp.Shutdown(context.Background()))
+	})
+	rm, err := middleware.NewRequestMetrics(otel.Meter("test"))
+	require.NoError(t, err)
+	router := setupRouter(zerolog.Nop(), rm)
+	for _, path := range []string{"/health", "/v1/api/thing"} {
+		router.GET(path, func(c *gin.Context) { c.Status(http.StatusOK) })
+	}
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/health", nil))
+	assert.Empty(t, exporter.GetSpans(), "/health must not be traced")
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/api/thing", nil))
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, trace.SpanKindServer, spans[0].SpanKind)
+	assert.Contains(t, spans[0].Name, "/v1/api/thing")
 }

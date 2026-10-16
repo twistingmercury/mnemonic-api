@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/errgroup"
 
@@ -253,8 +255,12 @@ func setupRouter(logger zerolog.Logger, requestMetrics *middleware.RequestMetric
 		c.Header("X-Request-ID", rid)
 		c.Next()
 	})
-	skipPaths := middleware.DefaultSkipPaths
-	router.Use(middleware.TracingMiddlewareWithSkipPaths(version.Service, skipPaths))
+	// /health is polled by probes; keep it out of traces, metrics and logs.
+	// /metrics is served on the otelx metrics port, not on this router.
+	skipPaths := []string{"/health"}
+	router.Use(otelgin.Middleware(version.Service, otelgin.WithFilter(func(r *http.Request) bool {
+		return !slices.Contains(skipPaths, r.URL.Path)
+	})))
 	router.Use(middleware.CompletionLogging(logger, skipPaths))
 	router.Use(requestMetrics.MiddlewareWithSkipPaths(skipPaths))
 	// Recovery must be inside every completion wrapper. Do not use Gin's default
