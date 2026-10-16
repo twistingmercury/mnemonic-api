@@ -1,9 +1,5 @@
 package repository
 
-// PostgreSQL error codes for constraint violations.
+// PgErrCodeUniqueViolation is the PostgreSQL unique_violation error code.
 // See: https://www.postgresql.org/docs/current/errcodes-appendix.html
-const (
-	PgErrCodeUniqueViolation     = "23505" // unique_violation
-	PgErrCodeForeignKeyViolation = "23503" // foreign_key_violation
-	PgErrCodeCheckViolation      = "23514" // check_violation
-)
+const PgErrCodeUniqueViolation = "23505"
