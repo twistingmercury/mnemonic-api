@@ -794,7 +794,7 @@ func TestPostgresSafeDSN(t *testing.T) {
 				Host: "localhost", Port: 5432, Database: "testdb",
 				Username: "testuser", Password: "supersecretpassword", SSLMode: "require",
 			},
-			expected: "postgres://testuser:*****@localhost:5432/testdb?sslmode=require",
+			expected: "postgres://testuser:xxxxx@localhost:5432/testdb?sslmode=require",
 		},
 		{
 			name: "username with special characters",
@@ -802,7 +802,7 @@ func TestPostgresSafeDSN(t *testing.T) {
 				Host: "localhost", Port: 5432, Database: "testdb",
 				Username: "user@domain", Password: "supersecretpassword", SSLMode: "require",
 			},
-			expected: "postgres://user%40domain:*****@localhost:5432/testdb?sslmode=require",
+			expected: "postgres://user%40domain:xxxxx@localhost:5432/testdb?sslmode=require",
 		},
 	}
 
@@ -836,13 +836,13 @@ func TestNeo4jSafeURI(t *testing.T) {
 		{
 			name:          "embedded username and password",
 			uri:           "bolt://myuser:secretpass@localhost:7687",
-			expected:      "bolt://myuser:*****@localhost:7687",
+			expected:      "bolt://myuser:xxxxx@localhost:7687",
 			shouldNotHave: "secretpass",
 		},
 		{
 			name:          "neo4j scheme with credentials",
 			uri:           "neo4j://admin:supersecret@cluster.example.com:7687",
-			expected:      "neo4j://admin:*****@cluster.example.com:7687",
+			expected:      "neo4j://admin:xxxxx@cluster.example.com:7687",
 			shouldNotHave: "supersecret",
 		},
 		{
@@ -853,14 +853,20 @@ func TestNeo4jSafeURI(t *testing.T) {
 		{
 			name:          "bolt+s with credentials",
 			uri:           "bolt+s://user:pass123@secure-host:7687",
-			expected:      "bolt+s://user:*****@secure-host:7687",
+			expected:      "bolt+s://user:xxxxx@secure-host:7687",
 			shouldNotHave: "pass123",
 		},
 		{
 			name:          "complex password with special chars",
 			uri:           "bolt://user:p@ss:word!@localhost:7687",
-			expected:      "bolt://user:*****@localhost:7687",
+			expected:      "bolt://user:xxxxx@localhost:7687",
 			shouldNotHave: "p@ss:word!",
+		},
+		{
+			name:          "unparseable uri is not echoed",
+			uri:           "bolt://user:secret@[::1",
+			expected:      "[unparseable neo4j uri]",
+			shouldNotHave: "secret",
 		},
 		{
 			name:     "invalid uri no scheme",

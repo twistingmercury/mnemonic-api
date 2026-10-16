@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -471,78 +473,35 @@ func (c *ServerConfig) Address() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
-// DSN returns the PostgreSQL DSN for use with database/sql.
-// Username, password, and SSLMode are URL-encoded to handle special characters safely.
-func (c *PostgresConfig) DSN() string {
-	u := &url.URL{
+// url builds the PostgreSQL connection URL. url.URL escapes the credentials
+// and the sslmode value.
+func (c *PostgresConfig) url() *url.URL {
+	return &url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(c.Username, c.Password),
-		Host:     fmt.Sprintf("%s:%d", c.Host, c.Port),
+		Host:     net.JoinHostPort(c.Host, strconv.Itoa(c.Port)),
 		Path:     c.Database,
-		RawQuery: fmt.Sprintf("sslmode=%s", url.QueryEscape(c.SSLMode)),
+		RawQuery: url.Values{"sslmode": {c.SSLMode}}.Encode(),
 	}
-	return u.String()
 }
 
-// SafeDSN returns the PostgreSQL DSN with the password masked.
-// Use this method for logging to prevent secret exposure.
+// DSN returns the PostgreSQL connection URL.
+func (c *PostgresConfig) DSN() string {
+	return c.url().String()
+}
+
+// SafeDSN returns the PostgreSQL connection URL with the password redacted,
+// for logging.
 func (c *PostgresConfig) SafeDSN() string {
-	u := &url.URL{
-		Scheme:   "postgres",
-		User:     url.User(c.Username),
-		Host:     fmt.Sprintf("%s:%d", c.Host, c.Port),
-		Path:     c.Database,
-		RawQuery: fmt.Sprintf("sslmode=%s", url.QueryEscape(c.SSLMode)),
-	}
-	// Build the DSN with the URL-encoded username, then inject the mask.
-	// url.User encodes the username safely; we append the fixed mask ourselves
-	// so that the literal "*****" is not percent-encoded.
-	safe := u.String()
-	// Replace "postgres://encodeduser@" with "postgres://encodeduser:*****@"
-	encoded := u.User.String()
-	safe = strings.Replace(safe, encoded+"@", encoded+":*****@", 1)
-	return safe
+	return c.url().Redacted()
 }
 
-// SafeURI returns the Neo4j URI with any embedded credentials masked for logging.
-// If the URI contains embedded credentials (user:pass@host), the password is masked.
-// Use this method for logging to prevent secret exposure.
+// SafeURI returns the Neo4j URI with any embedded password redacted, for
+// logging.
 func (c *Neo4jConfig) SafeURI() string {
-	// Check for embedded credentials in the URI (e.g., bolt://user:pass@host:port)
-	// Format: scheme://[user[:password]@]host[:port]
-	uri := c.URI
-
-	// Find the scheme separator
-	schemeEnd := strings.Index(uri, "://")
-	if schemeEnd == -1 {
-		return uri
+	u, err := url.Parse(c.URI)
+	if err != nil {
+		return "[unparseable neo4j uri]"
 	}
-
-	// Get the part after the scheme
-	rest := uri[schemeEnd+3:]
-
-	// Find the LAST @ symbol which separates credentials from host
-	// This handles passwords that contain @ symbols
-	atIndex := strings.LastIndex(rest, "@")
-	if atIndex == -1 {
-		// No embedded credentials
-		return uri
-	}
-
-	// Extract the credentials part (before the last @)
-	credentials := rest[:atIndex]
-
-	// Find the FIRST colon which separates username from password
-	colonIndex := strings.Index(credentials, ":")
-	if colonIndex == -1 {
-		// Only username, no password to mask
-		return uri
-	}
-
-	// Build the safe URI with masked password
-	scheme := uri[:schemeEnd+3]
-	username := credentials[:colonIndex]
-	hostPart := rest[atIndex+1:]
-
-	return fmt.Sprintf("%s%s:*****@%s", scheme, username, hostPart)
+	return u.Redacted()
 }
