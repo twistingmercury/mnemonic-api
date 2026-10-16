@@ -1,7 +1,7 @@
 # mnemonic-api
 
 > **Maturity Level**: Emerging - interfaces and local workflows are still evolving
-> **Version**: v0.4.0
+> **Version**: v0.4.1
 
 ---
 

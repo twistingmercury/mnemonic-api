@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.4.1] - 2026-10-16
+
 ### Changed
 
 - The service reports its own name, `mnemonic-api`, as the OpenTelemetry `service.name`, the `/health` `name`, the `/version` `service` and the HTTP tracing middleware name. All three services used to report `mnemonic`, so their traces and metrics could not be told apart.
