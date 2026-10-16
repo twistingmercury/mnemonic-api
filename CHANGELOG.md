@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-10-16
+
+### Changed
+
+- **Breaking:** `database.postgres.max_idle_conns` (`MNEMONIC_DATABASE_POSTGRES_MAX_IDLE_CONNS`) is renamed `database.postgres.min_conns` (`MNEMONIC_DATABASE_POSTGRES_MIN_CONNS`). It always set the pool's minimum open connections, not an idle cap. The default is still 5; it must be between 0 and `max_open_conns`.
+- Config validation errors list one `field: message` per line under the header, without a leading dash.
+- Logged connection strings mask the password as `xxxxx` instead of `*****`.
+- The create and update request bodies share one OpenAPI schema, `patterns.patternRequest`. The fields are unchanged.
+- Listing patterns no longer computes a total row count, which nothing returned.
+
+### Removed
+
+- **Breaking:** the `mnemonic.http.request.count`, `mnemonic.http.request.duration` and `mnemonic.http.request.in_flight` metrics. Use otelgin's standard `http.server.request.duration`.
+- Dead code: the unrouted FindRelated service and repository path, unused types and filters, test-only config getters, and the health package's global state.
+
+### Fixed
+
+- Neo4j URIs using `bolt+s://`, `bolt+ssc://`, `neo4j+s://` or `neo4j+ssc://` are accepted. They used to fail validation at startup.
+- `--version` prints to stdout instead of stderr.
+
 ## [v0.4.1] - 2026-10-16
 
 ### Changed
