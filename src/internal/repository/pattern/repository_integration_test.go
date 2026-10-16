@@ -299,10 +299,10 @@ func TestIntegration_List(t *testing.T) {
 	}
 
 	t.Run("lists all patterns without filters", func(t *testing.T) {
-		result, total, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{})
+		result, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{})
 
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, int64(5))
+		assert.GreaterOrEqual(t, len(result), 5)
 
 		// Verify our test patterns are in the result
 		names := make(map[string]bool)
@@ -315,26 +315,22 @@ func TestIntegration_List(t *testing.T) {
 	})
 
 	t.Run("lists with limit", func(t *testing.T) {
-		result, total, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{Limit: 2})
+		result, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{Limit: 2})
 
 		require.NoError(t, err)
 		assert.Len(t, result, 2)
-		assert.GreaterOrEqual(t, total, int64(5))
 	})
 
 	t.Run("lists with limit and offset", func(t *testing.T) {
 		// Get first page
-		page1, total1, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{Limit: 2, Offset: 0})
+		page1, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{Limit: 2, Offset: 0})
 		require.NoError(t, err)
 		assert.Len(t, page1, 2)
 
 		// Get second page
-		page2, total2, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{Limit: 2, Offset: 2})
+		page2, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{Limit: 2, Offset: 2})
 		require.NoError(t, err)
 		assert.Len(t, page2, 2)
-
-		// Totals should be the same
-		assert.Equal(t, total1, total2)
 
 		// Pages should have different patterns
 		for _, p1 := range page1 {
@@ -345,7 +341,7 @@ func TestIntegration_List(t *testing.T) {
 	})
 
 	t.Run("lists with tag filter", func(t *testing.T) {
-		result, _, err := repo.List(ctx, pattern.Filter{
+		result, err := repo.List(ctx, pattern.Filter{
 			Tags: []string{"go"},
 		}, repository.ListOptions{})
 
@@ -360,7 +356,7 @@ func TestIntegration_List(t *testing.T) {
 	})
 
 	t.Run("returns ordered results", func(t *testing.T) {
-		result, _, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{})
+		result, err := repo.List(ctx, pattern.Filter{}, repository.ListOptions{})
 
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(result), 2)
@@ -572,7 +568,7 @@ func TestIntegration_ListWithEnrichmentStatusFilter(t *testing.T) {
 	setEnrichmentStatus(t, pool, failedPattern.ID, "failed", &errMsg)
 
 	t.Run("filters by pending status", func(t *testing.T) {
-		result, _, err := repo.List(ctx, pattern.Filter{
+		result, err := repo.List(ctx, pattern.Filter{
 			EnrichmentStatus: "pending",
 		}, repository.ListOptions{})
 
@@ -589,7 +585,7 @@ func TestIntegration_ListWithEnrichmentStatusFilter(t *testing.T) {
 	})
 
 	t.Run("filters by enriched status", func(t *testing.T) {
-		result, _, err := repo.List(ctx, pattern.Filter{
+		result, err := repo.List(ctx, pattern.Filter{
 			EnrichmentStatus: "enriched",
 		}, repository.ListOptions{})
 
@@ -606,7 +602,7 @@ func TestIntegration_ListWithEnrichmentStatusFilter(t *testing.T) {
 	})
 
 	t.Run("filters by failed status", func(t *testing.T) {
-		result, _, err := repo.List(ctx, pattern.Filter{
+		result, err := repo.List(ctx, pattern.Filter{
 			EnrichmentStatus: "failed",
 		}, repository.ListOptions{})
 

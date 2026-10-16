@@ -29,8 +29,8 @@ type Repository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 
 	// List retrieves patterns with filtering and pagination.
-	// Returns the patterns (with Content left empty), total count, and any error.
-	List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, int64, error)
+	// Returns the patterns with Content left empty.
+	List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, error)
 
 	// WithTx returns a Repository that executes all operations within db.
 	// Use this to enlist the repository in a caller-owned transaction.
@@ -260,7 +260,7 @@ func (r *pgxRepository) Delete(ctx context.Context, id uuid.UUID) error {
 // List retrieves patterns with filtering and pagination. Content is not
 // selected: list responses only carry summary fields, and content is the
 // largest column by far.
-func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, int64, error) {
+func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, error) {
 	// Build query dynamically based on filter
 	var whereConditions []string
 	var args []any
@@ -312,13 +312,11 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 		whereClause = "WHERE " + strings.Join(whereConditions, " AND ")
 	}
 
-	// Build query with window function for total count
 	query := fmt.Sprintf(`
 		SELECT id, name, description, tags,
 			   entity_type, language, domain, version, related_patterns,
 			   enrichment_status, enrichment_error, enriched_at,
-			   created_at, updated_at,
-			   COUNT(*) OVER() as total_count
+			   created_at, updated_at
 		FROM patterns
 		%s
 		ORDER BY name ASC
@@ -340,12 +338,11 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing patterns: %w", err)
+		return nil, fmt.Errorf("listing patterns: %w", err)
 	}
 	defer rows.Close()
 
 	patterns := make([]*Pattern, 0)
-	var totalCount int64
 
 	for rows.Next() {
 		var p Pattern
@@ -367,28 +364,27 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 			&p.EnrichedAt,
 			&p.CreatedAt,
 			&p.UpdatedAt,
-			&totalCount,
 		)
 		if err != nil {
-			return nil, 0, fmt.Errorf("listing patterns: scanning row: %w", err)
+			return nil, fmt.Errorf("listing patterns: scanning row: %w", err)
 		}
 
 		if err := json.Unmarshal(tagsJSON, &p.Tags); err != nil {
-			return nil, 0, fmt.Errorf("unmarshaling tags: %w", err)
+			return nil, fmt.Errorf("unmarshaling tags: %w", err)
 		}
 
 		if err := json.Unmarshal(relatedPatternsJSON, &p.RelatedPatterns); err != nil {
-			return nil, 0, fmt.Errorf("unmarshaling related_patterns: %w", err)
+			return nil, fmt.Errorf("unmarshaling related_patterns: %w", err)
 		}
 
 		patterns = append(patterns, &p)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("listing patterns: iterating rows: %w", err)
+		return nil, fmt.Errorf("listing patterns: iterating rows: %w", err)
 	}
 
-	return patterns, totalCount, nil
+	return patterns, nil
 }
 
 // WithTx returns a new Repository that executes all operations within db.

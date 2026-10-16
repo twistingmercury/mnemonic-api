@@ -65,12 +65,12 @@ func (m *mockPatternRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return args.Error(0)
 }
 
-func (m *mockPatternRepo) List(ctx context.Context, filter patternrepo.Filter, opts repository.ListOptions) ([]*patternrepo.Pattern, int64, error) {
+func (m *mockPatternRepo) List(ctx context.Context, filter patternrepo.Filter, opts repository.ListOptions) ([]*patternrepo.Pattern, error) {
 	args := m.Called(ctx, filter, opts)
 	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
+		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*patternrepo.Pattern), args.Get(1).(int64), args.Error(2)
+	return args.Get(0).([]*patternrepo.Pattern), args.Error(1)
 }
 
 func (m *mockPatternRepo) FindSimilar(ctx context.Context, embedding []float32, opts patternrepo.SimilarityOptions) ([]*patternrepo.Match, error) {
@@ -1145,16 +1145,15 @@ func TestList(t *testing.T) {
 		pr.On("List", mock.Anything, filter, repository.ListOptions{
 			Offset: 0,
 			Limit:  10,
-		}).Return(patterns, int64(2), nil)
+		}).Return(patterns, nil)
 
-		result, total, err := svc.List(context.Background(), filter, patternsvc.ListOptions{
+		result, err := svc.List(context.Background(), filter, patternsvc.ListOptions{
 			Offset: 0,
 			Limit:  10,
 		})
 
 		require.NoError(t, err)
 		assert.Len(t, result, 2)
-		assert.Equal(t, int64(2), total)
 
 		pr.AssertExpectations(t)
 	})

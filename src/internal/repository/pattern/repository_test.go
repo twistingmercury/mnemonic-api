@@ -502,7 +502,6 @@ func TestRepository_List(t *testing.T) {
 		opts      repository.ListOptions
 		setupMock func(mock pgxmock.PgxPoolIface)
 		wantCount int
-		wantTotal int64
 		wantErr   error
 		wantNames []string
 	}{
@@ -515,19 +514,18 @@ func TestRepository_List(t *testing.T) {
 					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
-					"created_at", "updated_at", "total_count",
+					"created_at", "updated_at",
 				}).
 					AddRow(uuid.New(), "pattern-a", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
-						"pending", nil, nil, now, now, int64(2)).
+						"pending", nil, nil, now, now).
 					AddRow(uuid.New(), "pattern-b", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
-						"enriched", nil, &now, now, now, int64(2))
+						"enriched", nil, &now, now, now)
 				mock.ExpectQuery("SELECT id, name, description, tags,.* FROM patterns ORDER BY name").
 					WillReturnRows(rows)
 			},
 			wantCount: 2,
-			wantTotal: 2,
 			wantNames: []string{"pattern-a", "pattern-b"},
 		},
 		{
@@ -539,17 +537,16 @@ func TestRepository_List(t *testing.T) {
 					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
-					"created_at", "updated_at", "total_count",
+					"created_at", "updated_at",
 				}).
 					AddRow(uuid.New(), "enriched-pattern", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
-						"enriched", nil, &now, now, now, int64(1))
+						"enriched", nil, &now, now, now)
 				mock.ExpectQuery("SELECT .* FROM patterns.*WHERE enrichment_status").
 					WithArgs("enriched").
 					WillReturnRows(rows)
 			},
 			wantCount: 1,
-			wantTotal: 1,
 			wantNames: []string{"enriched-pattern"},
 		},
 		{
@@ -561,17 +558,16 @@ func TestRepository_List(t *testing.T) {
 					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
-					"created_at", "updated_at", "total_count",
+					"created_at", "updated_at",
 				}).
 					AddRow(uuid.New(), "pattern-b", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
-						"pending", nil, nil, now, now, int64(3))
+						"pending", nil, nil, now, now)
 				mock.ExpectQuery("SELECT .* FROM patterns.*LIMIT.*OFFSET").
 					WithArgs(1, 1).
 					WillReturnRows(rows)
 			},
 			wantCount: 1,
-			wantTotal: 3,
 			wantNames: []string{"pattern-b"},
 		},
 		{
@@ -583,13 +579,12 @@ func TestRepository_List(t *testing.T) {
 					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
-					"created_at", "updated_at", "total_count",
+					"created_at", "updated_at",
 				})
 				mock.ExpectQuery("SELECT .* FROM patterns ORDER BY name").
 					WillReturnRows(rows)
 			},
 			wantCount: 0,
-			wantTotal: 0,
 			wantNames: []string{},
 		},
 		{
@@ -601,18 +596,17 @@ func TestRepository_List(t *testing.T) {
 					"id", "name", "description", "tags",
 					"entity_type", "language", "domain", "version", "related_patterns",
 					"enrichment_status", "enrichment_error", "enriched_at",
-					"created_at", "updated_at", "total_count",
+					"created_at", "updated_at",
 				}).
 					AddRow(uuid.New(), "auth-pattern", &desc, tagsJSON,
 						"go-pattern", "go", "backend", nil, relatedPatternsJSON,
-						"pending", nil, nil, now, now, int64(1))
+						"pending", nil, nil, now, now)
 				// Query should include to_tsvector and plainto_tsquery for full-text search
 				mock.ExpectQuery("SELECT .* FROM patterns.*to_tsvector.*plainto_tsquery").
 					WithArgs("authentication").
 					WillReturnRows(rows)
 			},
 			wantCount: 1,
-			wantTotal: 1,
 			wantNames: []string{"auth-pattern"},
 		},
 	}
@@ -628,13 +622,12 @@ func TestRepository_List(t *testing.T) {
 			tt.setupMock(mock)
 
 			repo := pattern.NewRepository(mock)
-			patterns, total, err := repo.List(context.Background(), tt.filter, tt.opts)
+			patterns, err := repo.List(context.Background(), tt.filter, tt.opts)
 
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, tt.wantTotal, total)
 				assert.Len(t, patterns, tt.wantCount)
 
 				for i, expectedName := range tt.wantNames {

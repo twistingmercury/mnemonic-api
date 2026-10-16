@@ -76,12 +76,12 @@ func (m *mockPatternService) Delete(ctx context.Context, id uuid.UUID) error {
 	return args.Error(0)
 }
 
-func (m *mockPatternService) List(ctx context.Context, filter patternrepo.Filter, opts patternsvc.ListOptions) ([]*patternrepo.Pattern, int64, error) {
+func (m *mockPatternService) List(ctx context.Context, filter patternrepo.Filter, opts patternsvc.ListOptions) ([]*patternrepo.Pattern, error) {
 	args := m.Called(ctx, filter, opts)
 	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
+		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*patternrepo.Pattern), args.Get(1).(int64), args.Error(2)
+	return args.Get(0).([]*patternrepo.Pattern), args.Error(1)
 }
 
 func (m *mockPatternService) ListChunks(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
@@ -446,7 +446,7 @@ func TestPatternList_Success(t *testing.T) {
 	p1 := makePattern("pattern-a")
 	p2 := makePattern("pattern-b")
 	psvc.On("List", mock.Anything, mock.Anything, mock.Anything).
-		Return([]*patternrepo.Pattern{p1, p2}, int64(2), nil)
+		Return([]*patternrepo.Pattern{p1, p2}, nil)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/api/patterns?limit=20", nil)

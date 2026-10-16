@@ -445,7 +445,7 @@ func (h *Handler) List(c *gin.Context) {
 		EntityType:  c.Query("entity_type"),
 	}
 
-	patterns, _, err := h.patternSvc.List(c.Request.Context(), filter, patternsvc.ListOptions{
+	patterns, err := h.patternSvc.List(c.Request.Context(), filter, patternsvc.ListOptions{
 		Offset: offset,
 		Limit:  limit + 1,
 	})

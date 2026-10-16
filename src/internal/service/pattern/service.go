@@ -45,7 +45,7 @@ type Service interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 
 	// List retrieves patterns with filtering and pagination.
-	List(ctx context.Context, filter patternRepo.Filter, opts ListOptions) ([]*patternRepo.Pattern, int64, error)
+	List(ctx context.Context, filter patternRepo.Filter, opts ListOptions) ([]*patternRepo.Pattern, error)
 
 	// ListChunks retrieves chunk summaries (no content) for a pattern, ordered
 	// by chunk_index. It returns an empty slice when the pattern has no chunks
@@ -403,15 +403,15 @@ func (s *patternService) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 // List retrieves patterns with filtering and pagination.
-func (s *patternService) List(ctx context.Context, filter patternRepo.Filter, opts ListOptions) ([]*patternRepo.Pattern, int64, error) {
-	patterns, total, err := s.patternRepo.List(ctx, filter, repository.ListOptions{
+func (s *patternService) List(ctx context.Context, filter patternRepo.Filter, opts ListOptions) ([]*patternRepo.Pattern, error) {
+	patterns, err := s.patternRepo.List(ctx, filter, repository.ListOptions{
 		Offset: opts.Offset,
 		Limit:  opts.Limit,
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("list patterns: %w", err)
+		return nil, fmt.Errorf("list patterns: %w", err)
 	}
-	return patterns, total, nil
+	return patterns, nil
 }
 
 // ListChunks retrieves chunk summaries for a pattern, ordered by chunk_index.
