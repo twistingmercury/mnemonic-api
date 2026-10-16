@@ -22,8 +22,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/twistingmercury/mnemonic-api/internal/queue"
 )
 
 // PublisherConfig holds the connection parameters for the RabbitMQ publisher.
@@ -70,7 +68,7 @@ func newPublishFailuresCounter(meter metric.Meter) (metric.Int64Counter, error) 
 // NewPublisher dials the broker, opens a channel, and declares the destination
 // queue. It returns an error if any step fails, cleaning up partial resources
 // before returning. The meter is used to record publish failure counts.
-func NewPublisher(cfg PublisherConfig, meter metric.Meter) (queue.Publisher, error) {
+func NewPublisher(cfg PublisherConfig, meter metric.Meter) (*Publisher, error) {
 	counter, err := newPublishFailuresCounter(meter)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: create publish failures counter: %w", err)

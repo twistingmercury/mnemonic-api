@@ -24,7 +24,6 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/health"
 	"github.com/twistingmercury/mnemonic-api/internal/metrics"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
-	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	enrichmentjobrepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
@@ -83,17 +82,6 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 		}
 	}()
 
-	// Initialize health checks with the real connections.
-	queueConn, _ := pub.(health.QueueConnection)
-	if err := health.Initialize(health.Dependencies{
-		PGPool:      pgPool,
-		Neo4jDriver: neo4jDriver,
-		OpenAI:      cfg.OpenAI,
-		Queue:       queueConn,
-	}); err != nil {
-		return fmt.Errorf("failed to initialize health checks: %w", err)
-	}
-
 	// Create request metrics middleware.
 	requestMetrics, err := middleware.NewRequestMetrics(tel.Meter("mnemonic/http"))
 	if err != nil {
@@ -102,7 +90,12 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 
 	// Build the Admin API router.
 	router := setupRouter(logger, requestMetrics)
-	operations.SetupHandlers(router, health.Descriptors())
+	operations.SetupHandlers(router, health.Descriptors(health.Dependencies{
+		PGPool:      pgPool,
+		Neo4jDriver: neo4jDriver,
+		OpenAI:      cfg.OpenAI,
+		Queue:       pub,
+	}))
 	RegisterAPIRoutes(router, svc, cfg.Vocabulary)
 
 	// Build the Admin API HTTP server.
@@ -173,7 +166,7 @@ func wireDependencies(
 	logger zerolog.Logger,
 	meter metric.Meter,
 	registry *metrics.Registry,
-) (Services, queue.Publisher, error) {
+) (Services, *rabbitmq.Publisher, error) {
 	// Repositories.
 	patternRepo := patternrepo.NewRepository(pgPool)
 	enrichmentJobRepo := enrichmentjobrepo.NewRepository(pgPool)
