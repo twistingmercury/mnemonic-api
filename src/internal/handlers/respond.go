@@ -1,10 +1,3 @@
-// Package handlers provides shared utilities for REST handler packages.
-// Sub-packages under handlers implement the actual endpoint logic for
-// patterns and search.
-//
-// Documentation:
-//   - API: docs/api/openapi/mnemonic-v1.yaml
-//   - Design: docs/design/service-layer.md (Error Mapping, Cursor-Based Pagination)
 package handlers
 
 import (
@@ -52,71 +45,44 @@ type Pagination struct {
 	HasMore    bool    `json:"has_more"    example:"false"`
 }
 
-// CursorPayload encodes pagination state as an opaque string.
-type CursorPayload struct {
+// cursorPayload encodes pagination state as an opaque string.
+type cursorPayload struct {
 	Offset int `json:"o"`
 }
 
 // EncodeCursor creates an opaque cursor from an offset.
 func EncodeCursor(offset int) string {
-	data, _ := json.Marshal(CursorPayload{Offset: offset})
+	data, _ := json.Marshal(cursorPayload{Offset: offset})
 	return base64.URLEncoding.EncodeToString(data)
 }
 
 // RespondError maps a service error to an RFC 7807 Problem Details response.
+// Errors that map to a 5xx are recorded for the completion log and span, and
+// their text is not sent to the client.
 func RespondError(c *gin.Context, err error) {
-	traceID := activeTraceID(c)
-	instance := c.Request.URL.Path
-
+	status, slug, title, detail := http.StatusInternalServerError, "internal-error", "Internal Error", "an unexpected error occurred"
 	switch {
 	case errors.Is(err, service.ErrNotFound):
-		c.JSON(http.StatusNotFound, ProblemDetail{
-			Type:     ProblemBaseURI + "not-found",
-			Title:    "Not Found",
-			Status:   http.StatusNotFound,
-			Detail:   err.Error(),
-			Instance: instance,
-			TraceID:  traceID,
-		})
+		status, slug, title, detail = http.StatusNotFound, "not-found", "Not Found", err.Error()
 	case errors.Is(err, service.ErrConflict):
-		c.JSON(http.StatusConflict, ProblemDetail{
-			Type:     ProblemBaseURI + "conflict",
-			Title:    "Conflict",
-			Status:   http.StatusConflict,
-			Detail:   err.Error(),
-			Instance: instance,
-			TraceID:  traceID,
-		})
+		status, slug, title, detail = http.StatusConflict, "conflict", "Conflict", err.Error()
 	case errors.Is(err, service.ErrInvalidInput):
-		c.JSON(http.StatusBadRequest, ProblemDetail{
-			Type:     ProblemBaseURI + "validation-error",
-			Title:    "Validation Error",
-			Status:   http.StatusBadRequest,
-			Detail:   err.Error(),
-			Instance: instance,
-			TraceID:  traceID,
-		})
+		status, slug, title, detail = http.StatusBadRequest, "validation-error", "Validation Error", err.Error()
 	case errors.Is(err, service.ErrServiceUnavailable):
-		middleware.RecordFailure(c, err)
-		c.JSON(http.StatusServiceUnavailable, ProblemDetail{
-			Type:     ProblemBaseURI + "service-unavailable",
-			Title:    "Service Unavailable",
-			Status:   http.StatusServiceUnavailable,
-			Detail:   "service temporarily unavailable",
-			Instance: instance,
-			TraceID:  traceID,
-		})
-	default:
-		middleware.RecordFailure(c, err)
-		c.JSON(http.StatusInternalServerError, ProblemDetail{
-			Type:     ProblemBaseURI + "internal-error",
-			Title:    "Internal Error",
-			Status:   http.StatusInternalServerError,
-			Detail:   "an unexpected error occurred",
-			Instance: instance,
-			TraceID:  traceID,
-		})
+		status, slug, title, detail = http.StatusServiceUnavailable, "service-unavailable", "Service Unavailable", "service temporarily unavailable"
 	}
+	if status >= http.StatusInternalServerError {
+		middleware.RecordFailure(c, err)
+	}
+
+	c.JSON(status, ProblemDetail{
+		Type:     ProblemBaseURI + slug,
+		Title:    title,
+		Status:   status,
+		Detail:   detail,
+		Instance: c.Request.URL.Path,
+		TraceID:  activeTraceID(c),
+	})
 }
 
 // RespondValidationError returns a 400 response with field-level validation errors.
@@ -159,7 +125,7 @@ func DecodeCursorStrict(cursor string) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	var payload CursorPayload
+	var payload cursorPayload
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return 0, false
 	}
