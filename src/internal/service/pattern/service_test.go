@@ -73,14 +73,6 @@ func (m *mockPatternRepo) List(ctx context.Context, filter patternrepo.Filter, o
 	return args.Get(0).([]*patternrepo.Pattern), args.Error(1)
 }
 
-func (m *mockPatternRepo) FindSimilar(ctx context.Context, embedding []float32, opts patternrepo.SimilarityOptions) ([]*patternrepo.Match, error) {
-	args := m.Called(ctx, embedding, opts)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*patternrepo.Match), args.Error(1)
-}
-
 func (m *mockPatternRepo) WithTx(_ repository.DBTX) patternrepo.Repository {
 	return m.tx()
 }

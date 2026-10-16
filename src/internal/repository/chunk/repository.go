@@ -172,12 +172,7 @@ func (r *pgxRepository) DeleteByPatternID(ctx context.Context, patternID uuid.UU
 func (r *pgxRepository) FindSimilar(ctx context.Context, embedding []float32, opts SimilarityOptions) ([]*Match, error) {
 	vec := pgvector.NewVector(embedding)
 
-	maxResults := opts.MaxResults
-	if maxResults <= 0 {
-		maxResults = 10
-	}
-
-	// Build query dynamically to support optional PatternIDs and Tags filters.
+	// Build query dynamically to support the optional Tags filter.
 	// Fixed parameters: $1 = embedding vector, $2 = min similarity, $3 = language, $4 = domain, $5 = limit.
 	query := `
 		SELECT pc.id, pc.pattern_id, p.name, p.entity_type, p.language, p.domain, p.tags,
@@ -195,12 +190,6 @@ func (r *pgxRepository) FindSimilar(ctx context.Context, embedding []float32, op
 	args := []any{vec, opts.MinSimilarity, opts.Language, opts.Domain}
 	nextParam := 5
 
-	if len(opts.PatternIDs) > 0 {
-		query += fmt.Sprintf(" AND pc.pattern_id = ANY($%d)", nextParam)
-		args = append(args, opts.PatternIDs)
-		nextParam++
-	}
-
 	if len(opts.Tags) > 0 {
 		tagsJSON, err := json.Marshal(opts.Tags)
 		if err != nil {
@@ -212,7 +201,7 @@ func (r *pgxRepository) FindSimilar(ctx context.Context, embedding []float32, op
 	}
 
 	query += fmt.Sprintf(" ORDER BY pc.embedding <=> $1 LIMIT $%d", nextParam)
-	args = append(args, maxResults)
+	args = append(args, opts.MaxResults)
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
