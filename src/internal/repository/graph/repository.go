@@ -67,7 +67,7 @@ func (r *neo4jRepository) instrument(ctx context.Context, op string) (context.Co
 		}
 		span.End()
 		if r.dbMetrics != nil {
-			r.dbMetrics.RecordQueryWithError(ctx, "neo4j", op, time.Since(start), err)
+			r.dbMetrics.Record(ctx, "neo4j", op, time.Since(start), err)
 		}
 	}
 }

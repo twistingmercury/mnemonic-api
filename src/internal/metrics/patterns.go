@@ -53,21 +53,3 @@ func (m *Pattern) RecordQuery(ctx context.Context, database string, duration tim
 	m.queryLatency.Record(ctx, milliseconds(duration), attrs)
 	m.patternsReturned.Record(ctx, int64(count), attrs)
 }
-
-// RecordQueryLatency records only the query latency without pattern count.
-// Use this when the pattern count is not yet known.
-// The database should be a predefined value with bounded cardinality.
-// Do not use user-provided or dynamic values to avoid metric explosion.
-func (m *Pattern) RecordQueryLatency(ctx context.Context, database string, duration time.Duration) {
-	m.queryLatency.Record(ctx, milliseconds(duration),
-		metric.WithAttributes(attribute.String("database", database)))
-}
-
-// RecordPatternsReturned records only the number of patterns returned.
-// Use this when recording pattern count separately from latency.
-// The database should be a predefined value with bounded cardinality.
-// Do not use user-provided or dynamic values to avoid metric explosion.
-func (m *Pattern) RecordPatternsReturned(ctx context.Context, database string, count int) {
-	m.patternsReturned.Record(ctx, int64(count),
-		metric.WithAttributes(attribute.String("database", database)))
-}

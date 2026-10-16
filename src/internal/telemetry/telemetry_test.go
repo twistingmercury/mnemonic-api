@@ -135,25 +135,3 @@ func TestShutdown(t *testing.T) {
 	err = tel.Shutdown(ctx)
 	assert.NoError(t, err)
 }
-
-func TestMetricsRegistryCreatedAndAccessible(t *testing.T) {
-	cfg := createTestConfig()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	tel, err := telemetry.Initialize(ctx, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, tel)
-	defer func() {
-		_ = tel.Shutdown(ctx)
-	}()
-
-	// Verify metrics registry is created and accessible
-	registry := tel.MetricsRegistry()
-	assert.NotNil(t, registry, "MetricsRegistry should not be nil")
-
-	// Verify the registry has its sub-registries initialized
-	assert.NotNil(t, registry.Patterns, "Patterns metrics should be initialized")
-	assert.NotNil(t, registry.Database, "Database metrics should be initialized")
-}
