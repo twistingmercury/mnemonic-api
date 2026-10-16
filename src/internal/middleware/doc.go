@@ -3,7 +3,6 @@
 // OpenTelemetry span that otelgin starts, with configurable path exclusions.
 //
 // Documentation:
-//   - Architecture: docs/architecture/07-observability-architecture.md (Metrics (Prometheus) > Application Metrics)
-//   - Architecture: docs/architecture/07-observability-architecture.md (Distributed Tracing (Jaeger) > Trace Structure)
-//   - Design: docs/design/observability-implementation.md (Request Metrics Middleware, Tracing Middleware)
+//   - Architecture: docs/architecture/system/07-observability-architecture.md (MVP > Structured Logging)
+//   - Design: docs/design/observability-implementation.md (Structured Logging Implementation)
 package middleware
