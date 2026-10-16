@@ -20,10 +20,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
+	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	patternrepo "github.com/twistingmercury/mnemonic-api/internal/repository/pattern"
 	patternsvc "github.com/twistingmercury/mnemonic-api/internal/service/pattern"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
 )
+
+// timeFormat is the RFC 3339 UTC layout, to the second, used for every
+// timestamp in responses.
+const timeFormat = "2006-01-02T15:04:05Z"
 
 // kebabCaseRe matches lowercase kebab-case identifiers (e.g., "go-pattern", "go-error-handling").
 var kebabCaseRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -38,15 +43,11 @@ type Handler struct {
 
 // New creates a new pattern Handler backed by the given services and vocabulary config.
 func New(patternSvc patternsvc.Service, searchSvc searchsvc.Service, vocab config.VocabularyConfig) *Handler {
-	langs := make([]string, len(vocab.Languages))
-	copy(langs, vocab.Languages)
-	doms := make([]string, len(vocab.Domains))
-	copy(doms, vocab.Domains)
 	return &Handler{
 		patternSvc:       patternSvc,
 		searchSvc:        searchSvc,
-		allowedLanguages: langs,
-		allowedDomains:   doms,
+		allowedLanguages: vocab.Languages,
+		allowedDomains:   vocab.Domains,
 	}
 }
 
@@ -227,12 +228,12 @@ func toPatternResponse(p *patternrepo.Pattern, graph *patternsvc.GraphContext) p
 		RelatedPatterns:  relatedPatterns,
 		EnrichmentStatus: p.EnrichmentStatus,
 		EnrichmentError:  p.EnrichmentError,
-		CreatedAt:        p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:        p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		CreatedAt:        p.CreatedAt.UTC().Format(timeFormat),
+		UpdatedAt:        p.UpdatedAt.UTC().Format(timeFormat),
 	}
 
 	if p.EnrichedAt != nil {
-		s := p.EnrichedAt.UTC().Format("2006-01-02T15:04:05Z")
+		s := p.EnrichedAt.UTC().Format(timeFormat)
 		resp.EnrichedAt = &s
 	}
 
@@ -260,6 +261,18 @@ func toPatternResponse(p *patternrepo.Pattern, graph *patternsvc.GraphContext) p
 	return resp
 }
 
+func toChunkSummaries(chunks []*chunkrepo.Chunk) []chunkSummary {
+	summaries := make([]chunkSummary, len(chunks))
+	for i, ch := range chunks {
+		summaries[i] = chunkSummary{
+			ChunkIndex:       ch.ChunkIndex,
+			SectionTitle:     ch.SectionTitle,
+			EnrichmentStatus: ch.EnrichmentStatus,
+		}
+	}
+	return summaries
+}
+
 func toPatternSummary(p *patternrepo.Pattern) patternSummaryResponse {
 	tags := p.Tags
 	if tags == nil {
@@ -271,8 +284,8 @@ func toPatternSummary(p *patternrepo.Pattern) patternSummaryResponse {
 		Description:      p.Description,
 		Tags:             tags,
 		EnrichmentStatus: p.EnrichmentStatus,
-		CreatedAt:        p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:        p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		CreatedAt:        p.CreatedAt.UTC().Format(timeFormat),
+		UpdatedAt:        p.UpdatedAt.UTC().Format(timeFormat),
 	}
 }
 
@@ -346,6 +359,18 @@ func (h *Handler) validatePatternFields(name, content string, description *strin
 	return errs
 }
 
+// parseID reads the :id path parameter, responding 400 when it is not a UUID.
+func parseID(c *gin.Context) (uuid.UUID, bool) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
+			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
+		})
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
 // --- Handlers ---
 
 // Create handles POST /v1/api/patterns.
@@ -370,13 +395,6 @@ func (h *Handler) Create(c *gin.Context) {
 	if fieldErrs := h.validatePatternFields(req.Name, req.Content, req.Description, req.Tags, req.EntityType, req.Language, req.Domain); len(fieldErrs) > 0 {
 		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
 		return
-	}
-
-	if req.Tags == nil {
-		req.Tags = []string{}
-	}
-	if req.RelatedPatterns == nil {
-		req.RelatedPatterns = []string{}
 	}
 
 	pattern, err := h.patternSvc.Create(c.Request.Context(), patternsvc.CreateInput{
@@ -498,11 +516,8 @@ func (h *Handler) List(c *gin.Context) {
 // @Failure      500  {object}  handlers.ProblemDetail
 // @Router       /patterns/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
@@ -522,15 +537,7 @@ func (h *Handler) Get(c *gin.Context) {
 		// Non-fatal: log and return the pattern without chunks.
 		c.Header("X-Warning", "chunks unavailable")
 	} else {
-		summaries := make([]chunkSummary, len(chunks))
-		for i, ch := range chunks {
-			summaries[i] = chunkSummary{
-				ChunkIndex:       ch.ChunkIndex,
-				SectionTitle:     ch.SectionTitle,
-				EnrichmentStatus: ch.EnrichmentStatus,
-			}
-		}
-		resp.Chunks = summaries
+		resp.Chunks = toChunkSummaries(chunks)
 	}
 
 	c.JSON(http.StatusOK, resp)
@@ -550,11 +557,8 @@ func (h *Handler) Get(c *gin.Context) {
 // @Failure      500   {object}  handlers.ProblemDetail
 // @Router       /patterns/{id} [put]
 func (h *Handler) Update(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
@@ -567,13 +571,6 @@ func (h *Handler) Update(c *gin.Context) {
 	if fieldErrs := h.validatePatternFields(req.Name, req.Content, req.Description, req.Tags, req.EntityType, req.Language, req.Domain); len(fieldErrs) > 0 {
 		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
 		return
-	}
-
-	if req.Tags == nil {
-		req.Tags = []string{}
-	}
-	if req.RelatedPatterns == nil {
-		req.RelatedPatterns = []string{}
 	}
 
 	if _, err := h.patternSvc.Update(c.Request.Context(), id, patternsvc.UpdateInput{
@@ -605,11 +602,8 @@ func (h *Handler) Update(c *gin.Context) {
 // @Failure      500  {object}  handlers.ProblemDetail
 // @Router       /patterns/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
@@ -633,11 +627,8 @@ func (h *Handler) Delete(c *gin.Context) {
 // @Failure      500  {object}  handlers.ProblemDetail
 // @Router       /patterns/{id}/chunks [get]
 func (h *Handler) GetChunks(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
@@ -654,15 +645,7 @@ func (h *Handler) GetChunks(c *gin.Context) {
 		handlers.RespondError(c, err)
 		return
 	}
-	summaries := make([]chunkSummary, len(chunks))
-	for i, ch := range chunks {
-		summaries[i] = chunkSummary{
-			ChunkIndex:       ch.ChunkIndex,
-			SectionTitle:     ch.SectionTitle,
-			EnrichmentStatus: ch.EnrichmentStatus,
-		}
-	}
-	c.JSON(http.StatusOK, chunkListResponse{Chunks: summaries, Count: len(summaries)})
+	c.JSON(http.StatusOK, chunkListResponse{Chunks: toChunkSummaries(chunks), Count: len(chunks)})
 }
 
 // Search handles GET /v1/api/patterns/search.
@@ -696,16 +679,12 @@ func (h *Handler) Search(c *gin.Context) {
 		return
 	}
 
-	limit := 10
-	if rawLimit := c.Query("limit"); rawLimit != "" {
-		parsed, err := strconv.Atoi(rawLimit)
-		if err != nil || parsed < 1 || parsed > 50 {
-			handlers.RespondValidationError(c, "Invalid query parameter", []handlers.FieldError{
-				{Field: "limit", Code: "INVALID_VALUE", Message: "limit must be an integer between 1 and 50"},
-			})
-			return
-		}
-		limit = parsed
+	limit, ok := handlers.ParseIntQueryStrict(c, "limit", 10, 1, 50)
+	if !ok {
+		handlers.RespondValidationError(c, "Invalid query parameter", []handlers.FieldError{
+			{Field: "limit", Code: "INVALID_VALUE", Message: "limit must be an integer between 1 and 50"},
+		})
+		return
 	}
 
 	threshold := 0.7
