@@ -81,7 +81,7 @@ type SimilarityOptions struct {
 	// MinSimilarity is the minimum cosine similarity score to include in results.
 	MinSimilarity float64
 
-	// MaxResults caps the number of results returned. Defaults to 10 when <= 0.
+	// MaxResults caps the number of results returned.
 	MaxResults int
 
 	// Language filters results to chunks whose parent pattern has this language.
@@ -91,10 +91,6 @@ type SimilarityOptions struct {
 	// Domain filters results to chunks whose parent pattern has this domain.
 	// Empty string disables this filter.
 	Domain string
-
-	// PatternIDs restricts results to chunks belonging to these patterns.
-	// Empty slice disables this filter.
-	PatternIDs []uuid.UUID
 
 	// Tags restricts results to patterns whose tags contain all of these values.
 	// Empty slice disables this filter.

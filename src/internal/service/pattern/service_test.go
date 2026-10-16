@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -65,25 +64,12 @@ func (m *mockPatternRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return args.Error(0)
 }
 
-func (m *mockPatternRepo) List(ctx context.Context, filter patternrepo.Filter, opts repository.ListOptions) ([]*patternrepo.Pattern, int64, error) {
+func (m *mockPatternRepo) List(ctx context.Context, filter patternrepo.Filter, opts repository.ListOptions) ([]*patternrepo.Pattern, error) {
 	args := m.Called(ctx, filter, opts)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]*patternrepo.Pattern), args.Get(1).(int64), args.Error(2)
-}
-
-func (m *mockPatternRepo) FindSimilar(ctx context.Context, embedding []float32, opts patternrepo.SimilarityOptions) ([]*patternrepo.Match, error) {
-	args := m.Called(ctx, embedding, opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*patternrepo.Match), args.Error(1)
-}
-
-func (m *mockPatternRepo) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
-	args := m.Called(ctx, id)
-	return args.Bool(0), args.Error(1)
+	return args.Get(0).([]*patternrepo.Pattern), args.Error(1)
 }
 
 func (m *mockPatternRepo) WithTx(_ repository.DBTX) patternrepo.Repository {
@@ -128,14 +114,6 @@ func (m *mockGraphRepo) DeletePattern(ctx context.Context, patternID uuid.UUID) 
 	return args.Error(0)
 }
 
-func (m *mockGraphRepo) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]graphrepo.RelatedPattern, error) {
-	args := m.Called(ctx, patternID, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]graphrepo.RelatedPattern), args.Error(1)
-}
-
 func (m *mockGraphRepo) GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (*graphrepo.PatternGraph, error) {
 	args := m.Called(ctx, patternID, relatedLimit)
 	if args.Get(0) == nil {
@@ -160,18 +138,13 @@ func (m *mockTxBeginner) Begin(ctx context.Context) (pgx.Tx, error) {
 
 // ---------- Mock: pgx.Tx ----------
 
-// mockPgxTx implements pgx.Tx for unit-testing the transaction lifecycle
-// (Begin/Commit/Rollback) inside the service layer. The DBTX methods (Exec,
-// Query, QueryRow) are never invoked during service-layer tests because mock
-// repository implementations intercept all data-access calls before they
-// reach the underlying connection; those methods therefore panic to catch
-// accidental use.
+// mockPgxTx records the transaction lifecycle (Commit and Rollback) inside the
+// service layer. The mock repositories intercept every data-access call, so
+// the other pgx.Tx methods are left to the nil embedded interface and panic
+// if anything reaches them.
 type mockPgxTx struct {
+	pgx.Tx
 	mock.Mock
-}
-
-func (m *mockPgxTx) Begin(ctx context.Context) (pgx.Tx, error) {
-	panic("mockPgxTx.Begin called unexpectedly")
 }
 
 func (m *mockPgxTx) Commit(ctx context.Context) error {
@@ -182,38 +155,6 @@ func (m *mockPgxTx) Commit(ctx context.Context) error {
 func (m *mockPgxTx) Rollback(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
-}
-
-func (m *mockPgxTx) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
-	panic("mockPgxTx.Exec called unexpectedly")
-}
-
-func (m *mockPgxTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	panic("mockPgxTx.Query called unexpectedly")
-}
-
-func (m *mockPgxTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	panic("mockPgxTx.QueryRow called unexpectedly")
-}
-
-func (m *mockPgxTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
-	panic("mockPgxTx.CopyFrom called unexpectedly")
-}
-
-func (m *mockPgxTx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
-	panic("mockPgxTx.SendBatch called unexpectedly")
-}
-
-func (m *mockPgxTx) LargeObjects() pgx.LargeObjects {
-	panic("mockPgxTx.LargeObjects called unexpectedly")
-}
-
-func (m *mockPgxTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
-	panic("mockPgxTx.Prepare called unexpectedly")
-}
-
-func (m *mockPgxTx) Conn() *pgx.Conn {
-	panic("mockPgxTx.Conn called unexpectedly")
 }
 
 // ---------- Mock: chunkrepo.Repository ----------
@@ -298,54 +239,33 @@ var (
 	testRelatedID = uuid.MustParse("44444444-4444-4444-4444-444444444444")
 )
 
-func newTestService(
-	pr *mockPatternRepo,
-	er *mockEnrichmentRepo,
-	gr *mockGraphRepo,
-	tb *mockTxBeginner,
-) patternsvc.Service {
-	logger := zerolog.Nop()
-	// chunkRepo is wired: exercises the chunk-aware enrichment job path.
-	return patternsvc.New(pr, er, gr, tb, new(mockChunkRepo), &mockPublisher{}, logger)
+// fixture is a pattern service wired to fresh mocks.
+type fixture struct {
+	pr  *mockPatternRepo
+	er  *mockEnrichmentRepo
+	gr  *mockGraphRepo
+	tb  *mockTxBeginner
+	cr  *mockChunkRepo
+	pub *mockPublisher
+	svc patternsvc.Service
 }
 
-func newTestServiceWithChunkRepo(
-	pr *mockPatternRepo,
-	er *mockEnrichmentRepo,
-	gr *mockGraphRepo,
-	tb *mockTxBeginner,
-	cr *mockChunkRepo,
-) patternsvc.Service {
-	logger := zerolog.Nop()
-	return patternsvc.New(pr, er, gr, tb, cr, &mockPublisher{}, logger)
+func newFx() *fixture {
+	f := &fixture{
+		pr:  new(mockPatternRepo),
+		er:  new(mockEnrichmentRepo),
+		gr:  new(mockGraphRepo),
+		tb:  new(mockTxBeginner),
+		cr:  new(mockChunkRepo),
+		pub: &mockPublisher{},
+	}
+	f.svc = patternsvc.New(f.pr, f.er, f.gr, f.tb, f.cr, f.pub, zerolog.Nop())
+	return f
 }
 
-func newTestServiceWithChunkRepoAndLogger(
-	pr *mockPatternRepo,
-	er *mockEnrichmentRepo,
-	gr *mockGraphRepo,
-	tb *mockTxBeginner,
-	cr *mockChunkRepo,
-	logger zerolog.Logger,
-) patternsvc.Service {
-	return patternsvc.New(pr, er, gr, tb, cr, &mockPublisher{}, logger)
-}
-
-func newTestServiceWithPublisher(
-	pr *mockPatternRepo,
-	er *mockEnrichmentRepo,
-	gr *mockGraphRepo,
-	tb *mockTxBeginner,
-	cr *mockChunkRepo,
-	pub *mockPublisher,
-) patternsvc.Service {
-	logger := zerolog.Nop()
-	return patternsvc.New(pr, er, gr, tb, cr, pub, logger)
-}
-
-func testCreateInput() patternsvc.CreateInput {
+func testCreateInput() patternsvc.Input {
 	desc := "A test pattern"
-	return patternsvc.CreateInput{
+	return patternsvc.Input{
 		Name:        "go-error-handling",
 		Description: &desc,
 		Content:     "Always handle errors explicitly.",
@@ -353,9 +273,9 @@ func testCreateInput() patternsvc.CreateInput {
 	}
 }
 
-func testUpdateInput() patternsvc.UpdateInput {
+func testUpdateInput() patternsvc.Input {
 	desc := "Updated description"
-	return patternsvc.UpdateInput{
+	return patternsvc.Input{
 		Name:        "go-error-handling-v2",
 		Description: &desc,
 		Content:     "Updated content.",
@@ -409,16 +329,11 @@ func TestCreate(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
+		f := newFx()
 
-		expectCommittedTx(tb)
+		expectCommittedTx(f.tb)
 		// The write must go through the transaction, not the pool.
-		pr.tx().On("Create", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
+		f.pr.tx().On("Create", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
 			return p.Name == "go-error-handling" && p.Content == "Always handle errors explicitly."
 		})).Run(func(args mock.Arguments) {
 			p := args.Get(1).(*patternrepo.Pattern)
@@ -426,14 +341,14 @@ func TestCreate(t *testing.T) {
 			p.EnrichmentStatus = "pending"
 		}).Return(nil)
 		// Undecorated content becomes one whole-content chunk with one job.
-		cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
+		f.cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
 			return len(chunks) == 1 && chunks[0].Content == "Always handle errors explicitly."
 		})).Return(nil)
-		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
+		f.er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
 			return len(ids) == 1
 		})).Return([]uuid.UUID{uuid.New()}, nil).Once()
 
-		result, err := svc.Create(context.Background(), testCreateInput())
+		result, err := f.svc.Create(context.Background(), testCreateInput())
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -441,53 +356,45 @@ func TestCreate(t *testing.T) {
 		assert.Equal(t, testPatternID, result.ID)
 		assert.Equal(t, "pending", result.EnrichmentStatus)
 
-		pr.tx().AssertExpectations(t)
-		tb.AssertExpectations(t)
-		gr.AssertExpectations(t)
+		f.pr.tx().AssertExpectations(t)
+		f.tb.AssertExpectations(t)
+		f.gr.AssertExpectations(t)
 	})
 
 	t.Run("pattern name conflict returns service.ErrConflict", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		expectRolledBackTx(tb)
-		pr.tx().On("Create", mock.Anything, mock.Anything).Return(patternrepo.ErrNameExists)
+		expectRolledBackTx(f.tb)
+		f.pr.tx().On("Create", mock.Anything, mock.Anything).Return(patternrepo.ErrNameExists)
 
-		result, err := svc.Create(context.Background(), testCreateInput())
+		result, err := f.svc.Create(context.Background(), testCreateInput())
 
 		assert.Nil(t, result)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, service.ErrConflict), "expected service.ErrConflict, got: %v", err)
 
-		er.AssertNotCalled(t, "CreatePendingForChunks")
-		er.tx().AssertNotCalled(t, "CreatePendingForChunks")
-		tb.AssertExpectations(t)
+		f.er.AssertNotCalled(t, "CreatePendingForChunks")
+		f.er.tx().AssertNotCalled(t, "CreatePendingForChunks")
+		f.tb.AssertExpectations(t)
 	})
 
 	t.Run("begin failure never touches a repository", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		tb.On("Begin", mock.Anything).Return(nil, errors.New("pool exhausted"))
+		f.tb.On("Begin", mock.Anything).Return(nil, errors.New("pool exhausted"))
 
-		result, err := svc.Create(context.Background(), testCreateInput())
+		result, err := f.svc.Create(context.Background(), testCreateInput())
 
 		assert.Nil(t, result)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "pool exhausted")
-		pr.AssertNotCalled(t, "Create")
-		pr.tx().AssertNotCalled(t, "Create")
-		tb.AssertExpectations(t)
+		f.pr.AssertNotCalled(t, "Create")
+		f.pr.tx().AssertNotCalled(t, "Create")
+		f.tb.AssertExpectations(t)
 	})
 }
 
@@ -499,36 +406,28 @@ func TestGet(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		f.pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
 
-		result, err := svc.Get(context.Background(), testPatternID)
+		result, err := f.svc.Get(context.Background(), testPatternID)
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, testPatternID, result.ID)
 		assert.Equal(t, "go-error-handling", result.Name)
 
-		pr.AssertExpectations(t)
+		f.pr.AssertExpectations(t)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
+		f.pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
 
-		result, err := svc.Get(context.Background(), testPatternID)
+		result, err := f.svc.Get(context.Background(), testPatternID)
 
 		assert.Nil(t, result)
 		require.Error(t, err)
@@ -544,15 +443,11 @@ func TestGetWithGraph(t *testing.T) {
 	t.Run("enriched pattern with graph context", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
+		f.pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
 
-		gr.On("GetPatternGraph", mock.Anything, testPatternID, 10).Return(&graphrepo.PatternGraph{
+		f.gr.On("GetPatternGraph", mock.Anything, testPatternID, 10).Return(&graphrepo.PatternGraph{
 			RelatedPatterns: []graphrepo.RelatedPattern{
 				{
 					ID:             testRelatedID,
@@ -563,12 +458,12 @@ func TestGetWithGraph(t *testing.T) {
 				},
 			},
 			Concepts: []graphrepo.Concept{
-				{Name: "error-handling", Type: "practice"},
-				{Name: "golang", Type: "technology"},
+				{Name: "error-handling"},
+				{Name: "golang"},
 			},
 		}, nil)
 
-		pattern, graphCtx, err := svc.GetWithGraph(context.Background(), testPatternID)
+		pattern, graphCtx, err := f.svc.GetWithGraph(context.Background(), testPatternID)
 
 		require.NoError(t, err)
 		require.NotNil(t, pattern)
@@ -583,46 +478,37 @@ func TestGetWithGraph(t *testing.T) {
 
 		assert.Len(t, graphCtx.Concepts, 2)
 		assert.Equal(t, "error-handling", graphCtx.Concepts[0].Name)
-		assert.Equal(t, "practice", graphCtx.Concepts[0].Type)
 
-		pr.AssertExpectations(t)
-		gr.AssertExpectations(t)
+		f.pr.AssertExpectations(t)
+		f.gr.AssertExpectations(t)
 	})
 
 	t.Run("pattern not enriched returns nil graph context", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil) // status = "pending"
+		f.pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil) // status = "pending"
 
-		pattern, graphCtx, err := svc.GetWithGraph(context.Background(), testPatternID)
+		pattern, graphCtx, err := f.svc.GetWithGraph(context.Background(), testPatternID)
 
 		require.NoError(t, err)
 		require.NotNil(t, pattern)
 		assert.Nil(t, graphCtx)
 
-		gr.AssertNotCalled(t, "GetPatternGraph")
+		f.gr.AssertNotCalled(t, "GetPatternGraph")
 	})
 
 	t.Run("neo4j failure returns nil graph context", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
-		gr.On("GetPatternGraph", mock.Anything, testPatternID, 10).
+		f.pr.On("Get", mock.Anything, testPatternID).Return(enrichedPattern(), nil)
+		f.gr.On("GetPatternGraph", mock.Anything, testPatternID, 10).
 			Return(nil, errors.New("neo4j connection refused"))
 
-		pattern, graphCtx, err := svc.GetWithGraph(context.Background(), testPatternID)
+		pattern, graphCtx, err := f.svc.GetWithGraph(context.Background(), testPatternID)
 
 		require.NoError(t, err, "neo4j failure should degrade gracefully")
 		require.NotNil(t, pattern)
@@ -635,259 +521,122 @@ func TestGetWithGraph(t *testing.T) {
 func TestUpdate(t *testing.T) {
 	t.Parallel()
 
-	t.Run("happy path", func(t *testing.T) {
+	t.Run("happy path replaces chunks and jobs in one committed transaction, then publishes", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
+		f := newFx()
+		tx := expectCommittedTx(f.tb)
+		jobIDs := []uuid.UUID{uuid.New(), uuid.New()}
 
-		input := testUpdateInput()
-
-		// Get existing.
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-
-		// Transaction lifecycle.
-		tb.On("Begin", mock.Anything).Return(tx, nil)
-		tx.On("Commit", mock.Anything).Return(nil)
-		tx.On("Rollback", mock.Anything).Return(nil)
-
-		// Update.
-		pr.tx().On("Update", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
-			return p.ID == testPatternID && p.Name == "go-error-handling-v2" && p.Content == "Updated content."
+		f.pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		f.pr.tx().On("Update", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
+			return p.ID == testPatternID && p.Name == "go-error-handling-v2" && p.Content == decoratedContent
 		})).Return(nil)
-
-		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
-
-		// "Updated content." has no [//]: pattern section, so it becomes one
-		// whole-content chunk with one job rather than none.
-		cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
-			return len(chunks) == 1 && chunks[0].Content == "Updated content." && chunks[0].SectionTitle == "Content"
+		f.cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
+		// decoratedContent has two [//]: pattern sections, so two chunks and two jobs.
+		f.cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
+			return len(chunks) == 2 && chunks[0].SectionTitle == "Section One" && chunks[1].SectionTitle == "Section Two"
 		})).Return(nil)
-		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 1
-		})).Return([]uuid.UUID{uuid.New()}, nil).Once()
+		f.er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
+			return len(ids) == 2
+		})).Return(jobIDs, nil).Once()
 
-		result, err := svc.Update(context.Background(), testPatternID, input)
+		result, err := f.svc.Update(context.Background(), testPatternID, patternsvc.Input{
+			Name:    "go-error-handling-v2",
+			Content: decoratedContent,
+		})
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, testPatternID, result.ID)
 		assert.Equal(t, "go-error-handling-v2", result.Name)
 
-		tb.AssertExpectations(t)
-		tx.AssertExpectations(t)
-		pr.AssertExpectations(t)
-		cr.AssertExpectations(t)
-		gr.AssertExpectations(t)
+		// Every write went through the transaction, which committed. A service
+		// that opened a transaction and then mutated via the pool repositories
+		// would satisfy the lifecycle assertion but fail the pool ones.
+		tx.AssertCalled(t, "Commit", mock.Anything)
+		f.pr.tx().AssertExpectations(t)
+		f.cr.tx().AssertExpectations(t)
+		f.er.tx().AssertExpectations(t)
+		f.pr.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+		f.cr.AssertNotCalled(t, "DeleteByPatternID", mock.Anything, mock.Anything)
+		f.cr.AssertNotCalled(t, "CreateBatch", mock.Anything, mock.Anything)
+		f.er.AssertNotCalled(t, "CreatePendingForChunks", mock.Anything, mock.Anything)
+
+		// The new jobs are published only after the commit, in chunk order.
+		assert.Equal(t, jobIDs, f.pub.publishedIDs)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
+		f.pr.On("Get", mock.Anything, testPatternID).Return(nil, patternrepo.ErrNotFound)
 
-		result, err := svc.Update(context.Background(), testPatternID, testUpdateInput())
+		result, err := f.svc.Update(context.Background(), testPatternID, testUpdateInput())
 
 		assert.Nil(t, result)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
 
-		pr.AssertNotCalled(t, "Update")
-	})
-
-	t.Run("chunk-aware path deletes stale chunks, creates new chunks, and enqueues per-chunk jobs", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
-
-		input := patternsvc.UpdateInput{
-			Name:    "go-error-handling-v2",
-			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
-			Tags:    []string{"golang", "errors"},
-		}
-
-		// Transaction lifecycle.
-		tb.On("Begin", mock.Anything).Return(tx, nil)
-		tx.On("Commit", mock.Anything).Return(nil)
-		// Rollback is always called by defer; pgx guarantees it is a no-op
-		// after a successful Commit.
-		tx.On("Rollback", mock.Anything).Return(nil)
-
-		// Get existing.
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-
-		// Update.
-		pr.tx().On("Update", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
-			return p.ID == testPatternID && p.Name == "go-error-handling-v2"
-		})).Return(nil)
-
-		// Chunk-aware path: delete stale chunks.
-		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
-
-		// Create new chunks (content has 2 PATTERN sections → 2 chunks).
-		cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
-			return len(chunks) == 2
-		})).Return(nil)
-
-		// One batched insert creates a job for each of the 2 chunks.
-		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 2
-		})).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil).Once()
-
-		result, err := svc.Update(context.Background(), testPatternID, input)
-
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, testPatternID, result.ID)
-		assert.Equal(t, "go-error-handling-v2", result.Name)
-
-		tb.AssertExpectations(t)
-		tx.AssertExpectations(t)
-		pr.AssertExpectations(t)
-		cr.AssertExpectations(t)
-		er.AssertExpectations(t)
+		f.pr.AssertNotCalled(t, "Update")
 	})
 
 	t.Run("chunk-aware path: delete stale chunks error rolls back transaction and propagates error", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
+		f := newFx()
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "## Section\nContent.",
 		}
 
 		// Transaction lifecycle: Begin succeeds, Rollback is called by defer.
-		tb.On("Begin", mock.Anything).Return(tx, nil)
+		f.tb.On("Begin", mock.Anything).Return(tx, nil)
 		tx.On("Rollback", mock.Anything).Return(nil)
 
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
-		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).
+		f.pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		f.pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
+		f.cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).
 			Return(errors.New("delete failed"))
 
-		result, err := svc.Update(context.Background(), testPatternID, input)
+		result, err := f.svc.Update(context.Background(), testPatternID, input)
 
 		assert.Nil(t, result)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "delete stale chunks")
 
-		tb.AssertExpectations(t)
+		f.tb.AssertExpectations(t)
 		tx.AssertExpectations(t)
 		tx.AssertNotCalled(t, "Commit")
-		cr.AssertNotCalled(t, "CreateBatch")
-		er.AssertNotCalled(t, "CreatePendingForChunks")
-	})
-
-	t.Run("transaction commit path: all steps succeed, Commit called, Rollback is deferred no-op", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
-
-		input := patternsvc.UpdateInput{
-			Name:    "go-error-handling-v2",
-			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
-		}
-
-		// Transaction lifecycle: full commit path.
-		tb.On("Begin", mock.Anything).Return(tx, nil)
-		tx.On("Commit", mock.Anything).Return(nil)
-		// Rollback is called by defer even after a successful Commit; pgx
-		// makes it a no-op.
-		tx.On("Rollback", mock.Anything).Return(nil)
-
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
-		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
-		cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
-			return len(chunks) == 2
-		})).Return(nil)
-
-		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 2
-		})).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil).Once()
-
-		result, err := svc.Update(context.Background(), testPatternID, input)
-
-		require.NoError(t, err)
-		require.NotNil(t, result)
-
-		tx.AssertCalled(t, "Commit", mock.Anything)
-		tx.AssertCalled(t, "Rollback", mock.Anything)
-
-		// The writes went through the transaction, not the pool. A service that
-		// opened a transaction and then mutated via the original repositories
-		// would satisfy the lifecycle assertions above but fail these.
-		cr.tx().AssertCalled(t, "CreateBatch", mock.Anything, mock.Anything)
-		pr.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
-		cr.AssertNotCalled(t, "CreateBatch", mock.Anything, mock.Anything)
-		cr.AssertNotCalled(t, "DeleteByPatternID", mock.Anything, mock.Anything)
-		er.AssertNotCalled(t, "CreatePendingForChunks", mock.Anything, mock.Anything)
-
-		tb.AssertExpectations(t)
-		tx.AssertExpectations(t)
-		pr.AssertExpectations(t)
-		pr.tx().AssertExpectations(t)
-		cr.tx().AssertExpectations(t)
-		er.tx().AssertExpectations(t)
+		f.cr.AssertNotCalled(t, "CreateBatch")
+		f.er.AssertNotCalled(t, "CreatePendingForChunks")
 	})
 
 	t.Run("transaction rollback path: CreateBatch fails, Commit NOT called", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
+		f := newFx()
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "[//]: pattern\n## Section One\nNew content.",
 		}
 
-		tb.On("Begin", mock.Anything).Return(tx, nil)
+		f.tb.On("Begin", mock.Anything).Return(tx, nil)
 		tx.On("Rollback", mock.Anything).Return(nil)
 
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
-		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
-		cr.tx().On("CreateBatch", mock.Anything, mock.Anything).
+		f.pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		f.pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
+		f.cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
+		f.cr.tx().On("CreateBatch", mock.Anything, mock.Anything).
 			Return(errors.New("db error"))
 
-		result, err := svc.Update(context.Background(), testPatternID, input)
+		result, err := f.svc.Update(context.Background(), testPatternID, input)
 
 		assert.Nil(t, result)
 		require.Error(t, err)
@@ -896,82 +645,39 @@ func TestUpdate(t *testing.T) {
 		tx.AssertNotCalled(t, "Commit")
 		tx.AssertCalled(t, "Rollback", mock.Anything)
 
-		tb.AssertExpectations(t)
+		f.tb.AssertExpectations(t)
 		tx.AssertExpectations(t)
 	})
 
 	t.Run("transaction rollback path: Update fails, later steps NOT called", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
+		f := newFx()
 		tx := new(mockPgxTx)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "[//]: pattern\n## Section One\nNew content.",
 		}
 
-		tb.On("Begin", mock.Anything).Return(tx, nil)
+		f.tb.On("Begin", mock.Anything).Return(tx, nil)
 		tx.On("Rollback", mock.Anything).Return(nil)
 
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		pr.tx().On("Update", mock.Anything, mock.Anything).Return(errors.New("update failed"))
+		f.pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+		f.pr.tx().On("Update", mock.Anything, mock.Anything).Return(errors.New("update failed"))
 
-		result, err := svc.Update(context.Background(), testPatternID, input)
+		result, err := f.svc.Update(context.Background(), testPatternID, input)
 
 		assert.Nil(t, result)
 		require.Error(t, err)
 
 		tx.AssertNotCalled(t, "Commit")
 		tx.AssertCalled(t, "Rollback", mock.Anything)
-		cr.AssertNotCalled(t, "DeleteByPatternID")
-		cr.AssertNotCalled(t, "CreateBatch")
+		f.cr.AssertNotCalled(t, "DeleteByPatternID")
+		f.cr.AssertNotCalled(t, "CreateBatch")
 
-		tb.AssertExpectations(t)
+		f.tb.AssertExpectations(t)
 		tx.AssertExpectations(t)
-	})
-
-	t.Run("publishJob called for each chunk after transaction commits", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		tx := new(mockPgxTx)
-		pub := &mockPublisher{}
-		svc := newTestServiceWithPublisher(pr, er, gr, tb, cr, pub)
-
-		input := patternsvc.UpdateInput{
-			Name:    "go-error-handling-v2",
-			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
-		}
-
-		tb.On("Begin", mock.Anything).Return(tx, nil)
-		tx.On("Commit", mock.Anything).Return(nil)
-		tx.On("Rollback", mock.Anything).Return(nil)
-
-		pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-		pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
-		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
-		cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
-			return len(chunks) == 2
-		})).Return(nil)
-
-		er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).
-			Return([]uuid.UUID{uuid.New(), uuid.New()}, nil).Once()
-
-		result, err := svc.Update(context.Background(), testPatternID, input)
-
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Len(t, pub.publishedIDs, 2, "expected publishJob called once per chunk")
 	})
 }
 
@@ -987,22 +693,16 @@ const decoratedContent = "[//]: pattern\n## Section One\nContent one.\n\n[//]: p
 func TestCreate_JobFailureRollsBackEverything(t *testing.T) {
 	t.Parallel()
 
-	pr := new(mockPatternRepo)
-	er := new(mockEnrichmentRepo)
-	gr := new(mockGraphRepo)
-	tb := new(mockTxBeginner)
-	cr := new(mockChunkRepo)
-	pub := &mockPublisher{}
-	svc := patternsvc.New(pr, er, gr, tb, cr, pub, zerolog.Nop())
+	f := newFx()
 
-	expectRolledBackTx(tb)
-	pr.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	expectRolledBackTx(f.tb)
+	f.pr.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		args.Get(1).(*patternrepo.Pattern).ID = testPatternID
 	}).Return(nil)
-	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
-	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
+	f.cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+	f.er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
 
-	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
+	result, err := f.svc.Create(context.Background(), patternsvc.Input{
 		Name:    "go-error-handling",
 		Content: decoratedContent,
 	})
@@ -1011,9 +711,9 @@ func TestCreate_JobFailureRollsBackEverything(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "jobs table unavailable")
 	// Nothing may be published for a transaction that never committed.
-	assert.Empty(t, pub.publishedIDs)
-	tb.AssertExpectations(t)
-	pr.tx().AssertExpectations(t)
+	assert.Empty(t, f.pub.publishedIDs)
+	f.tb.AssertExpectations(t)
+	f.pr.tx().AssertExpectations(t)
 }
 
 // TestUpdate_JobFailureRollsBackEverything is the Update counterpart. It
@@ -1023,31 +723,25 @@ func TestCreate_JobFailureRollsBackEverything(t *testing.T) {
 func TestUpdate_JobFailureRollsBackEverything(t *testing.T) {
 	t.Parallel()
 
-	pr := new(mockPatternRepo)
-	er := new(mockEnrichmentRepo)
-	gr := new(mockGraphRepo)
-	tb := new(mockTxBeginner)
-	cr := new(mockChunkRepo)
-	pub := &mockPublisher{}
-	svc := patternsvc.New(pr, er, gr, tb, cr, pub, zerolog.Nop())
+	f := newFx()
 
-	expectRolledBackTx(tb)
-	pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
-	pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
-	cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
-	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
-	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
+	expectRolledBackTx(f.tb)
+	f.pr.On("Get", mock.Anything, testPatternID).Return(testPattern(), nil)
+	f.pr.tx().On("Update", mock.Anything, mock.Anything).Return(nil)
+	f.cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
+	f.cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+	f.er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
 
-	result, err := svc.Update(context.Background(), testPatternID, patternsvc.UpdateInput{
+	result, err := f.svc.Update(context.Background(), testPatternID, patternsvc.Input{
 		Name:    "go-error-handling-v2",
 		Content: decoratedContent,
 	})
 
 	require.Error(t, err)
 	assert.Nil(t, result)
-	assert.Empty(t, pub.publishedIDs)
-	tb.AssertExpectations(t)
-	cr.tx().AssertExpectations(t)
+	assert.Empty(t, f.pub.publishedIDs)
+	f.tb.AssertExpectations(t)
+	f.cr.tx().AssertExpectations(t)
 }
 
 // TestCreate_CommitFailurePublishesNothing pins the ordering that makes
@@ -1057,31 +751,20 @@ func TestUpdate_JobFailureRollsBackEverything(t *testing.T) {
 func TestCreate_CommitFailurePublishesNothing(t *testing.T) {
 	t.Parallel()
 
-	pr := new(mockPatternRepo)
-	er := new(mockEnrichmentRepo)
-	gr := new(mockGraphRepo)
-	tb := new(mockTxBeginner)
-	cr := new(mockChunkRepo)
-	pub := &mockPublisher{}
-	svc := patternsvc.New(pr, er, gr, tb, cr, pub, zerolog.Nop())
+	f := newFx()
 
 	tx := new(mockPgxTx)
-	tb.On("Begin", mock.Anything).Return(tx, nil)
+	f.tb.On("Begin", mock.Anything).Return(tx, nil)
 	tx.On("Commit", mock.Anything).Return(errors.New("connection lost"))
 	tx.On("Rollback", mock.Anything).Return(nil)
 
-	pr.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	f.pr.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		args.Get(1).(*patternrepo.Pattern).ID = testPatternID
 	}).Return(nil)
-	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		for i, c := range args.Get(1).([]*chunkrepo.Chunk) {
-			c.ID = uuid.New()
-			_ = i
-		}
-	}).Return(nil)
-	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil)
+	f.cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+	f.er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil)
 
-	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
+	result, err := f.svc.Create(context.Background(), patternsvc.Input{
 		Name:    "go-error-handling",
 		Content: decoratedContent,
 	})
@@ -1089,7 +772,7 @@ func TestCreate_CommitFailurePublishesNothing(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "connection lost")
-	assert.Empty(t, pub.publishedIDs, "a rolled-back transaction must publish nothing")
+	assert.Empty(t, f.pub.publishedIDs, "a rolled-back transaction must publish nothing")
 	tx.AssertExpectations(t)
 }
 
@@ -1099,139 +782,32 @@ func TestDelete(t *testing.T) {
 	t.Run("happy path deletes from neo4j once, with no graph-wide sweep", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Delete", mock.Anything, testPatternID).Return(nil)
-		gr.On("DeletePattern", mock.Anything, testPatternID).Return(nil).Once()
+		f.pr.On("Delete", mock.Anything, testPatternID).Return(nil)
+		f.gr.On("DeletePattern", mock.Anything, testPatternID).Return(nil).Once()
 
-		err := svc.Delete(context.Background(), testPatternID)
+		err := f.svc.Delete(context.Background(), testPatternID)
 
 		require.NoError(t, err)
 
-		pr.AssertExpectations(t)
-		gr.AssertExpectations(t)
+		f.pr.AssertExpectations(t)
+		f.gr.AssertExpectations(t)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		f := newFx()
 
-		pr.On("Delete", mock.Anything, testPatternID).Return(patternrepo.ErrNotFound)
+		f.pr.On("Delete", mock.Anything, testPatternID).Return(patternrepo.ErrNotFound)
 
-		err := svc.Delete(context.Background(), testPatternID)
+		err := f.svc.Delete(context.Background(), testPatternID)
 
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
 
-		gr.AssertNotCalled(t, "DeletePattern")
-	})
-}
-
-// ---------- List ----------
-
-func TestList(t *testing.T) {
-	t.Parallel()
-
-	t.Run("happy path", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
-
-		patterns := []*patternrepo.Pattern{
-			{ID: testPatternID, Name: "pattern-a"},
-			{ID: testRelatedID, Name: "pattern-b"},
-		}
-		filter := patternrepo.Filter{Tags: []string{"golang"}}
-
-		pr.On("List", mock.Anything, filter, repository.ListOptions{
-			Offset: 0,
-			Limit:  10,
-		}).Return(patterns, int64(2), nil)
-
-		result, total, err := svc.List(context.Background(), filter, patternsvc.ListOptions{
-			Offset: 0,
-			Limit:  10,
-		})
-
-		require.NoError(t, err)
-		assert.Len(t, result, 2)
-		assert.Equal(t, int64(2), total)
-
-		pr.AssertExpectations(t)
-	})
-}
-
-// ---------- FindRelated ----------
-
-func TestFindRelated(t *testing.T) {
-	t.Parallel()
-
-	t.Run("happy path", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
-
-		pr.On("Exists", mock.Anything, testPatternID).Return(true, nil)
-
-		gr.On("FindRelatedPatterns", mock.Anything, testPatternID, 5).Return([]graphrepo.RelatedPattern{
-			{
-				ID:             testRelatedID,
-				Name:           "go-concurrency",
-				SharedConcepts: 3,
-				Similarity:     0.8,
-				ConceptNames:   []string{"goroutines", "channels", "select"},
-			},
-		}, nil)
-
-		results, err := svc.FindRelated(context.Background(), testPatternID, 5)
-
-		require.NoError(t, err)
-		require.Len(t, results, 1)
-		assert.Equal(t, testRelatedID, results[0].ID)
-		assert.Equal(t, "go-concurrency", results[0].Name)
-		assert.Equal(t, "RELATED_TO", results[0].Relationship)
-		assert.InDelta(t, 0.8, results[0].Similarity, 0.001)
-		assert.Equal(t, []string{"goroutines", "channels", "select"}, results[0].SharedConcepts)
-
-		pr.AssertExpectations(t)
-		gr.AssertExpectations(t)
-	})
-
-	t.Run("pattern not found", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
-
-		pr.On("Exists", mock.Anything, testPatternID).Return(false, nil)
-
-		results, err := svc.FindRelated(context.Background(), testPatternID, 5)
-
-		assert.Nil(t, results)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
-
-		gr.AssertNotCalled(t, "FindRelatedPatterns")
+		f.gr.AssertNotCalled(t, "DeletePattern")
 	})
 }
 
@@ -1244,13 +820,7 @@ func TestFindRelated(t *testing.T) {
 func TestCreate_ChunksContent(t *testing.T) {
 	t.Parallel()
 
-	pr := new(mockPatternRepo)
-	er := new(mockEnrichmentRepo)
-	gr := new(mockGraphRepo)
-	tb := new(mockTxBeginner)
-	cr := new(mockChunkRepo)
-	pub := &mockPublisher{}
-	svc := patternsvc.New(pr, er, gr, tb, cr, pub, zerolog.Nop())
+	f := newFx()
 
 	chunkIDs := []uuid.UUID{
 		uuid.MustParse("22222222-2222-2222-2222-222222222222"),
@@ -1265,7 +835,7 @@ func TestCreate_ChunksContent(t *testing.T) {
 	jobForChunk := map[uuid.UUID]uuid.UUID{}
 
 	desc := "A chunked pattern"
-	input := patternsvc.CreateInput{
+	input := patternsvc.Input{
 		Name:        "chunked-pattern",
 		Description: &desc,
 		Content:     decoratedContent,
@@ -1275,9 +845,9 @@ func TestCreate_ChunksContent(t *testing.T) {
 		Domain:      "backend",
 	}
 
-	expectCommittedTx(tb)
+	expectCommittedTx(f.tb)
 
-	pr.tx().On("Create", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
+	f.pr.tx().On("Create", mock.Anything, mock.MatchedBy(func(p *patternrepo.Pattern) bool {
 		return p.Name == "chunked-pattern" && p.EntityType == "go-pattern" && p.Language == "go"
 	})).Run(func(args mock.Arguments) {
 		p := args.Get(1).(*patternrepo.Pattern)
@@ -1286,21 +856,21 @@ func TestCreate_ChunksContent(t *testing.T) {
 	}).Return(nil)
 
 	var created []*chunkrepo.Chunk
-	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	f.cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		created = args.Get(1).([]*chunkrepo.Chunk)
-		// Stand in for the RETURNING clause that assigns real IDs.
+		// Stand in for the IDs CreateBatch assigns.
 		for i, c := range created {
 			c.ID = chunkIDs[i]
 		}
 	}).Return(nil)
 
-	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	f.er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		for i, chunkID := range args.Get(1).([]uuid.UUID) {
 			jobForChunk[chunkID] = jobIDs[i]
 		}
 	}).Return(jobIDs, nil).Once()
 
-	result, err := svc.Create(context.Background(), input)
+	result, err := f.svc.Create(context.Background(), input)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1322,12 +892,12 @@ func TestCreate_ChunksContent(t *testing.T) {
 	}, jobForChunk)
 
 	// Exactly those jobs are published, in chunk order, after the commit.
-	assert.Equal(t, jobIDs, pub.publishedIDs)
+	assert.Equal(t, jobIDs, f.pub.publishedIDs)
 
-	pr.tx().AssertExpectations(t)
-	cr.tx().AssertExpectations(t)
-	er.tx().AssertExpectations(t)
-	tb.AssertExpectations(t)
+	f.pr.tx().AssertExpectations(t)
+	f.cr.tx().AssertExpectations(t)
+	f.er.tx().AssertExpectations(t)
+	f.tb.AssertExpectations(t)
 }
 
 func TestListChunks(t *testing.T) {
@@ -1336,20 +906,15 @@ func TestListChunks(t *testing.T) {
 	t.Run("happy path returns chunk summaries without re-reading the pattern", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
+		f := newFx()
 
 		expectedChunks := []*chunkrepo.Chunk{
 			{ChunkIndex: 0, SectionTitle: "Overview", EnrichmentStatus: "pending"},
 			{ChunkIndex: 1, SectionTitle: "Philosophy", EnrichmentStatus: "enriched"},
 		}
-		cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return(expectedChunks, nil)
+		f.cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return(expectedChunks, nil)
 
-		result, err := svc.ListChunks(context.Background(), testPatternID)
+		result, err := f.svc.ListChunks(context.Background(), testPatternID)
 
 		require.NoError(t, err)
 		require.Len(t, result, 2)
@@ -1359,69 +924,45 @@ func TestListChunks(t *testing.T) {
 		assert.Equal(t, 1, result[1].ChunkIndex)
 		assert.Equal(t, "Philosophy", result[1].SectionTitle)
 
-		pr.AssertNotCalled(t, "Get")
-		cr.AssertExpectations(t)
+		f.pr.AssertNotCalled(t, "Get")
+		f.cr.AssertExpectations(t)
 	})
 
 	t.Run("returns empty slice when pattern has no chunks", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
+		f := newFx()
 
-		cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return([]*chunkrepo.Chunk{}, nil)
+		f.cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return([]*chunkrepo.Chunk{}, nil)
 
-		result, err := svc.ListChunks(context.Background(), testPatternID)
+		result, err := f.svc.ListChunks(context.Background(), testPatternID)
 
 		require.NoError(t, err)
 		assert.Empty(t, result)
 
-		pr.AssertNotCalled(t, "Get")
-		cr.AssertExpectations(t)
+		f.pr.AssertNotCalled(t, "Get")
+		f.cr.AssertExpectations(t)
 	})
 
 	t.Run("repo error propagates", func(t *testing.T) {
 		t.Parallel()
 
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		cr := new(mockChunkRepo)
-		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
+		f := newFx()
 
-		cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return(nil, errors.New("db error"))
+		f.cr.On("ListSummariesByPatternID", mock.Anything, testPatternID).Return(nil, errors.New("db error"))
 
-		result, err := svc.ListChunks(context.Background(), testPatternID)
+		result, err := f.svc.ListChunks(context.Background(), testPatternID)
 
 		assert.Nil(t, result)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "db error")
 
-		pr.AssertNotCalled(t, "Get")
-		cr.AssertExpectations(t)
+		f.pr.AssertNotCalled(t, "Get")
+		f.cr.AssertExpectations(t)
 	})
 }
 
 // ---------- PublishJob error ----------
-
-// newTestServiceWithFailingPublisher wires a service with the given chunkRepo
-// and a publisher that always fails.
-func newTestServiceWithFailingPublisher(
-	pr *mockPatternRepo,
-	er *mockEnrichmentRepo,
-	gr *mockGraphRepo,
-	tb *mockTxBeginner,
-	cr *mockChunkRepo,
-	pub *mockPublisher,
-) patternsvc.Service {
-	logger := zerolog.Nop()
-	return patternsvc.New(pr, er, gr, tb, cr, pub, logger)
-}
 
 // TestPublishJobError covers the best-effort half of the design: the rows are
 // committed, so a queue failure must not fail the request, but it must leave an
@@ -1431,34 +972,25 @@ func newTestServiceWithFailingPublisher(
 func TestPublishJobError(t *testing.T) {
 	t.Parallel()
 
-	pr := new(mockPatternRepo)
-	er := new(mockEnrichmentRepo)
-	gr := new(mockGraphRepo)
-	tb := new(mockTxBeginner)
-	cr := new(mockChunkRepo)
-	pub := &mockPublisher{publishErr: errors.New("queue unavailable")}
+	f := newFx()
+	f.pub.publishErr = errors.New("queue unavailable")
 
 	var logs bytes.Buffer
-	svc := patternsvc.New(pr, er, gr, tb, cr, pub, zerolog.New(&logs))
+	svc := patternsvc.New(f.pr, f.er, f.gr, f.tb, f.cr, f.pub, zerolog.New(&logs))
 
 	jobIDs := []uuid.UUID{
 		uuid.MustParse("aaaaaaaa-0000-0000-0000-000000000001"),
 		uuid.MustParse("bbbbbbbb-0000-0000-0000-000000000002"),
 	}
 
-	expectCommittedTx(tb)
-	pr.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	expectCommittedTx(f.tb)
+	f.pr.tx().On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		args.Get(1).(*patternrepo.Pattern).ID = testPatternID
 	}).Return(nil)
-	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		for i, c := range args.Get(1).([]*chunkrepo.Chunk) {
-			c.ID = uuid.New()
-			_ = i
-		}
-	}).Return(nil)
-	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(jobIDs, nil).Once()
+	f.cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
+	f.er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(jobIDs, nil).Once()
 
-	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
+	result, err := svc.Create(context.Background(), patternsvc.Input{
 		Name:    "chunked-pattern",
 		Content: decoratedContent,
 	})
@@ -1468,8 +1000,8 @@ func TestPublishJobError(t *testing.T) {
 	require.NotNil(t, result)
 
 	// Publication was attempted for both committed jobs and both failed.
-	assert.Equal(t, jobIDs, pub.attemptedIDs)
-	assert.Empty(t, pub.publishedIDs)
+	assert.Equal(t, jobIDs, f.pub.attemptedIDs)
+	assert.Empty(t, f.pub.publishedIDs)
 
 	// Each failure names the job, its pattern and the cause as structured
 	// fields, so the pending row can be located and re-published. A message

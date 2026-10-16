@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -43,7 +44,7 @@ func TestDefaultValues(t *testing.T) {
 	assert.Equal(t, config.DefaultPostgresUsername, cfg.Database.Postgres.Username)
 	assert.Equal(t, config.DefaultPostgresSSLMode, cfg.Database.Postgres.SSLMode)
 	assert.Equal(t, int32(config.DefaultPostgresMaxOpenConns), cfg.Database.Postgres.MaxOpenConns)
-	assert.Equal(t, int32(config.DefaultPostgresMaxIdleConns), cfg.Database.Postgres.MaxIdleConns)
+	assert.Equal(t, int32(config.DefaultPostgresMinConns), cfg.Database.Postgres.MinConns)
 	assert.Equal(t, config.DefaultPostgresConnMaxLifetime, cfg.Database.Postgres.ConnMaxLifetime)
 
 	// Neo4j defaults
@@ -339,7 +340,7 @@ func TestValidation_ServerConfig(t *testing.T) {
 			tt.modify(cfg)
 			errs := cfg.Validate()
 			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
+			assert.ErrorContains(t, errors.Join(errs...), tt.expectError)
 		})
 	}
 }
@@ -380,19 +381,19 @@ func TestValidation_DatabaseConfig(t *testing.T) {
 			expectError: "database.postgres.max_open_conns",
 		},
 		{
-			name: "negative postgres max_idle_conns",
+			name: "negative postgres min_conns",
 			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Database.Postgres.MaxIdleConns = -1
+				cfg.Database.Postgres.MinConns = -1
 			},
-			expectError: "database.postgres.max_idle_conns",
+			expectError: "database.postgres.min_conns",
 		},
 		{
-			name: "max_idle_conns greater than max_open_conns",
+			name: "min_conns greater than max_open_conns",
 			modify: func(cfg *config.MnemonicConfig) {
 				cfg.Database.Postgres.MaxOpenConns = 10
-				cfg.Database.Postgres.MaxIdleConns = 20
+				cfg.Database.Postgres.MinConns = 20
 			},
-			expectError: "database.postgres.max_idle_conns",
+			expectError: "database.postgres.min_conns",
 		},
 		{
 			name: "negative postgres conn_max_lifetime",
@@ -412,6 +413,13 @@ func TestValidation_DatabaseConfig(t *testing.T) {
 			name: "invalid neo4j uri prefix - http",
 			modify: func(cfg *config.MnemonicConfig) {
 				cfg.Database.Neo4j.URI = "http://localhost:7687"
+			},
+			expectError: "database.neo4j.uri",
+		},
+		{
+			name: "invalid neo4j uri prefix - unknown TLS suffix",
+			modify: func(cfg *config.MnemonicConfig) {
+				cfg.Database.Neo4j.URI = "bolt+tls://localhost:7687"
 			},
 			expectError: "database.neo4j.uri",
 		},
@@ -444,7 +452,7 @@ func TestValidation_DatabaseConfig(t *testing.T) {
 			tt.modify(cfg)
 			errs := cfg.Validate()
 			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
+			assert.ErrorContains(t, errors.Join(errs...), tt.expectError)
 		})
 	}
 }
@@ -456,6 +464,10 @@ func TestValidation_Neo4jValidURIs(t *testing.T) {
 		"bolt://neo4j-server:7687",
 		"neo4j://localhost:7687",
 		"neo4j://neo4j-cluster:7687",
+		"bolt+s://secure-host:7687",
+		"bolt+ssc://self-signed-host:7687",
+		"neo4j+s://xxxx.databases.neo4j.io",
+		"neo4j+ssc://self-signed-cluster:7687",
 	}
 
 	for _, uri := range validURIs {
@@ -464,7 +476,7 @@ func TestValidation_Neo4jValidURIs(t *testing.T) {
 			cfg.Database.Neo4j.URI = uri
 			errs := cfg.Validate()
 			for _, err := range errs {
-				assert.NotEqual(t, "database.neo4j.uri", err.Field,
+				assert.NotContains(t, err.Error(), "database.neo4j.uri",
 					"URI %q should be valid", uri)
 			}
 		})
@@ -507,7 +519,7 @@ func TestValidation_OpenAIConfig(t *testing.T) {
 			tt.modify(cfg)
 			errs := cfg.Validate()
 			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
+			assert.ErrorContains(t, errors.Join(errs...), tt.expectError)
 		})
 	}
 }
@@ -534,7 +546,7 @@ func TestValidation_LoggingConfig(t *testing.T) {
 			tt.modify(cfg)
 			errs := cfg.Validate()
 			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
+			assert.ErrorContains(t, errors.Join(errs...), tt.expectError)
 		})
 	}
 }
@@ -549,7 +561,7 @@ func TestValidation_LoggingLevels(t *testing.T) {
 			cfg.Logging.Level = level
 			errs := cfg.Validate()
 			for _, err := range errs {
-				assert.NotEqual(t, "logging.level", err.Field)
+				assert.NotContains(t, err.Error(), "logging.level")
 			}
 		})
 	}
@@ -612,7 +624,7 @@ func TestValidation_ObservabilityConfig(t *testing.T) {
 			tt.modify(cfg)
 			errs := cfg.Validate()
 			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
+			assert.ErrorContains(t, errors.Join(errs...), tt.expectError)
 		})
 	}
 }
@@ -623,7 +635,6 @@ func TestValidation_PortConflict(t *testing.T) {
 		name        string
 		modify      func(cfg *config.MnemonicConfig)
 		expectError bool
-		errorField  string
 	}{
 		{
 			name: "metrics enabled with same port as server - conflict",
@@ -633,7 +644,6 @@ func TestValidation_PortConflict(t *testing.T) {
 				cfg.Observability.Metrics.Port = 8080
 			},
 			expectError: true,
-			errorField:  "observability.metrics.port",
 		},
 		{
 			name: "metrics enabled with different port - no conflict",
@@ -661,26 +671,13 @@ func TestValidation_PortConflict(t *testing.T) {
 			tt.modify(cfg)
 			errs := cfg.Validate()
 
+			conflict := "observability.metrics.port: must be different from server.port"
 			if tt.expectError {
-				require.NotEmpty(t, errs, "expected validation errors")
-				// Check that the specific error field is present
-				found := false
-				for _, err := range errs {
-					if err.Field == tt.errorField {
-						found = true
-						assert.Contains(t, err.Message, "server.port")
-						break
-					}
-				}
-				assert.True(t, found, "expected error for field %q", tt.errorField)
+				assert.ErrorContains(t, errors.Join(errs...), conflict)
 			} else {
-				// Verify no port conflict errors (other validation errors may exist)
-				for _, err := range errs {
-					if err.Field == "observability.metrics.port" {
-						assert.NotContains(t, err.Message, "server.port",
-							"unexpected port conflict error when none expected")
-					}
-				}
+				// Other validation errors may exist; only the conflict must not.
+				assert.NotContains(t, fmt.Sprint(errs), conflict,
+					"unexpected port conflict error when none expected")
 			}
 		})
 	}
@@ -695,9 +692,9 @@ func TestValidation_MultipleErrors(t *testing.T) {
 	errs := cfg.Validate()
 	require.NotEmpty(t, errs, "expected validation errors")
 
-	errStr := errs.Error()
-	assert.Contains(t, errStr, "server.port")
-	assert.Contains(t, errStr, "database.postgres.port")
+	err := errors.Join(errs...)
+	assert.ErrorContains(t, err, "server.port")
+	assert.ErrorContains(t, err, "database.postgres.port")
 }
 
 // TestServerAddress tests the Address() helper method.
@@ -737,21 +734,6 @@ func TestServerAddress(t *testing.T) {
 			assert.Equal(t, tt.expected, cfg.Address())
 		})
 	}
-}
-
-// TestPostgresConnectionString tests the ConnectionString() helper method.
-func TestPostgresConnectionString(t *testing.T) {
-	cfg := &config.PostgresConfig{
-		Host:     "localhost",
-		Port:     5432,
-		Database: "testdb",
-		Username: "testuser",
-		Password: "testpass",
-		SSLMode:  "require",
-	}
-
-	expected := "host=localhost port=5432 user=testuser password=testpass dbname=testdb sslmode=require"
-	assert.Equal(t, expected, cfg.ConnectionString())
 }
 
 // TestPostgresDSN tests the DSN() helper method.
@@ -810,23 +792,6 @@ func TestPostgresDSN(t *testing.T) {
 	}
 }
 
-// TestPostgresSafeConnectionString tests the SafeConnectionString() helper method.
-func TestPostgresSafeConnectionString(t *testing.T) {
-	cfg := &config.PostgresConfig{
-		Host:     "localhost",
-		Port:     5432,
-		Database: "testdb",
-		Username: "testuser",
-		Password: "supersecretpassword",
-		SSLMode:  "require",
-	}
-
-	result := cfg.SafeConnectionString()
-	expected := "host=localhost port=5432 user=testuser password=***** dbname=testdb sslmode=require"
-	assert.Equal(t, expected, result)
-	assert.NotContains(t, result, "supersecretpassword")
-}
-
 // TestPostgresSafeDSN tests the SafeDSN() helper method.
 func TestPostgresSafeDSN(t *testing.T) {
 	tests := []struct {
@@ -840,7 +805,7 @@ func TestPostgresSafeDSN(t *testing.T) {
 				Host: "localhost", Port: 5432, Database: "testdb",
 				Username: "testuser", Password: "supersecretpassword", SSLMode: "require",
 			},
-			expected: "postgres://testuser:*****@localhost:5432/testdb?sslmode=require",
+			expected: "postgres://testuser:xxxxx@localhost:5432/testdb?sslmode=require",
 		},
 		{
 			name: "username with special characters",
@@ -848,7 +813,7 @@ func TestPostgresSafeDSN(t *testing.T) {
 				Host: "localhost", Port: 5432, Database: "testdb",
 				Username: "user@domain", Password: "supersecretpassword", SSLMode: "require",
 			},
-			expected: "postgres://user%40domain:*****@localhost:5432/testdb?sslmode=require",
+			expected: "postgres://user%40domain:xxxxx@localhost:5432/testdb?sslmode=require",
 		},
 	}
 
@@ -857,40 +822,6 @@ func TestPostgresSafeDSN(t *testing.T) {
 			result := tt.cfg.SafeDSN()
 			assert.Equal(t, tt.expected, result)
 			assert.NotContains(t, result, tt.cfg.Password)
-		})
-	}
-}
-
-// TestNeo4jConnectionURI tests the ConnectionURI() helper method.
-func TestNeo4jConnectionURI(t *testing.T) {
-	tests := []struct {
-		name     string
-		uri      string
-		expected string
-	}{
-		{
-			name:     "bolt scheme",
-			uri:      "bolt://localhost:7687",
-			expected: "bolt://localhost:7687",
-		},
-		{
-			name:     "neo4j scheme",
-			uri:      "neo4j://neo4j-cluster:7687",
-			expected: "neo4j://neo4j-cluster:7687",
-		},
-		{
-			name:     "bolt+s scheme",
-			uri:      "bolt+s://secure-host:7687",
-			expected: "bolt+s://secure-host:7687",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Neo4jConfig{
-				URI: tt.uri,
-			}
-			assert.Equal(t, tt.expected, cfg.ConnectionURI())
 		})
 	}
 }
@@ -916,13 +847,13 @@ func TestNeo4jSafeURI(t *testing.T) {
 		{
 			name:          "embedded username and password",
 			uri:           "bolt://myuser:secretpass@localhost:7687",
-			expected:      "bolt://myuser:*****@localhost:7687",
+			expected:      "bolt://myuser:xxxxx@localhost:7687",
 			shouldNotHave: "secretpass",
 		},
 		{
 			name:          "neo4j scheme with credentials",
 			uri:           "neo4j://admin:supersecret@cluster.example.com:7687",
-			expected:      "neo4j://admin:*****@cluster.example.com:7687",
+			expected:      "neo4j://admin:xxxxx@cluster.example.com:7687",
 			shouldNotHave: "supersecret",
 		},
 		{
@@ -933,14 +864,20 @@ func TestNeo4jSafeURI(t *testing.T) {
 		{
 			name:          "bolt+s with credentials",
 			uri:           "bolt+s://user:pass123@secure-host:7687",
-			expected:      "bolt+s://user:*****@secure-host:7687",
+			expected:      "bolt+s://user:xxxxx@secure-host:7687",
 			shouldNotHave: "pass123",
 		},
 		{
 			name:          "complex password with special chars",
 			uri:           "bolt://user:p@ss:word!@localhost:7687",
-			expected:      "bolt://user:*****@localhost:7687",
+			expected:      "bolt://user:xxxxx@localhost:7687",
 			shouldNotHave: "p@ss:word!",
+		},
+		{
+			name:          "unparseable uri is not echoed",
+			uri:           "bolt://user:secret@[::1",
+			expected:      "[unparseable neo4j uri]",
+			shouldNotHave: "secret",
 		},
 		{
 			name:     "invalid uri no scheme",
@@ -959,59 +896,6 @@ func TestNeo4jSafeURI(t *testing.T) {
 			if tt.shouldNotHave != "" {
 				assert.NotContains(t, result, tt.shouldNotHave)
 			}
-		})
-	}
-}
-
-// TestNeo4jCredentials tests the Credentials() helper method.
-func TestNeo4jCredentials(t *testing.T) {
-	tests := []struct {
-		name             string
-		username         string
-		password         string
-		expectedUsername string
-		expectedPassword string
-	}{
-		{
-			name:             "standard credentials",
-			username:         "neo4j",
-			password:         "secretpassword",
-			expectedUsername: "neo4j",
-			expectedPassword: "secretpassword",
-		},
-		{
-			name:             "empty password",
-			username:         "neo4j",
-			password:         "",
-			expectedUsername: "neo4j",
-			expectedPassword: "",
-		},
-		{
-			name:             "custom username",
-			username:         "admin",
-			password:         "admin123",
-			expectedUsername: "admin",
-			expectedPassword: "admin123",
-		},
-		{
-			name:             "special characters in password",
-			username:         "user",
-			password:         "p@ss:word!#$%",
-			expectedUsername: "user",
-			expectedPassword: "p@ss:word!#$%",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Neo4jConfig{
-				URI:      "bolt://localhost:7687",
-				Username: tt.username,
-				Password: tt.password,
-			}
-			username, password := cfg.Credentials()
-			assert.Equal(t, tt.expectedUsername, username)
-			assert.Equal(t, tt.expectedPassword, password)
 		})
 	}
 }
@@ -1085,8 +969,8 @@ func TestLoadWithFlags_UnreadableExplicitFile(t *testing.T) {
 	}{
 		{name: "missing via flag", viaFlag: true, notFound: true},
 		{name: "missing via env", viaFlag: false, notFound: true},
-		{name: "malformed via flag", viaFlag: true, content: ptr("server: [unclosed\n")},
-		{name: "malformed via env", viaFlag: false, content: ptr("server: [unclosed\n")},
+		{name: "malformed via flag", viaFlag: true, content: new("server: [unclosed\n")},
+		{name: "malformed via env", viaFlag: false, content: new("server: [unclosed\n")},
 	}
 
 	for _, tt := range tests {
@@ -1351,33 +1235,9 @@ func TestVocabularyConfig_Validate(t *testing.T) {
 				return
 			}
 			require.NotEmpty(t, errs, "expected validation errors")
-			assert.Contains(t, errs.Error(), tt.expectError)
+			assert.ErrorContains(t, errors.Join(errs...), tt.expectError)
 		})
 	}
-}
-
-// TestValidationErrorFormat tests the ValidationError and ValidationErrors formatting.
-func TestValidationErrorFormat(t *testing.T) {
-	err := config.ValidationError{
-		Field:   "server.port",
-		Message: "must be between 1 and 65535, got 0",
-	}
-	assert.Equal(t, "server.port: must be between 1 and 65535, got 0", err.Error())
-
-	errs := config.ValidationErrors{
-		{Field: "server.port", Message: "invalid"},
-		{Field: "database.postgres.port", Message: "invalid"},
-	}
-	errStr := errs.Error()
-	assert.Contains(t, errStr, "configuration validation failed:")
-	assert.Contains(t, errStr, "server.port: invalid")
-	assert.Contains(t, errStr, "database.postgres.port: invalid")
-}
-
-// TestEmptyValidationErrors tests that empty ValidationErrors returns empty string.
-func TestEmptyValidationErrors(t *testing.T) {
-	var errs config.ValidationErrors
-	assert.Empty(t, errs.Error())
 }
 
 // Helper functions
@@ -1431,8 +1291,6 @@ func configFlagSet(t *testing.T, path string) *pflag.FlagSet {
 	return flags
 }
 
-func ptr[T any](v T) *T { return &v }
-
 // validConfig returns a fully valid configuration for testing.
 func validConfig() *config.MnemonicConfig {
 	return &config.MnemonicConfig{
@@ -1453,7 +1311,7 @@ func validConfig() *config.MnemonicConfig {
 				Password:        "",
 				SSLMode:         "prefer",
 				MaxOpenConns:    25,
-				MaxIdleConns:    5,
+				MinConns:        5,
 				ConnMaxLifetime: 5 * time.Minute,
 			},
 			Neo4j: config.Neo4jConfig{
@@ -1508,17 +1366,11 @@ func TestOpenAIBaseURL_DefaultsToOpenAI(t *testing.T) {
 }
 
 func TestOpenAIBaseURL_EnvOverride(t *testing.T) {
-	clearMnemonicEnvVars(t)
+	isolateConfigSources(t)
 	t.Setenv("MNEMONIC_OPENAI_BASE_URL", "http://localhost:8090/v1")
 
-	v := viper.New()
-	config.SetDefaults(v)
-	v.SetEnvPrefix("MNEMONIC")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	cfg := &config.MnemonicConfig{}
-	require.NoError(t, v.Unmarshal(cfg))
+	cfg, err := config.LoadWithFlags(nil)
+	require.NoError(t, err)
 
 	assert.Equal(t, "http://localhost:8090/v1", cfg.OpenAI.BaseURL)
 }
@@ -1533,9 +1385,5 @@ func TestOpenAIBaseURL_ValidateRejectsBareString(t *testing.T) {
 	cfg := &config.MnemonicConfig{}
 	require.NoError(t, v.Unmarshal(cfg))
 
-	var fields []string
-	for _, e := range cfg.Validate() {
-		fields = append(fields, e.Field)
-	}
-	assert.Contains(t, fields, "openai.base_url")
+	assert.ErrorContains(t, errors.Join(cfg.Validate()...), "openai.base_url")
 }

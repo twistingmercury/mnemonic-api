@@ -75,29 +75,3 @@ type Filter struct {
 	// EntityType filters patterns by category.
 	EntityType string
 }
-
-// SimilarityOptions defines options for similarity search.
-type SimilarityOptions struct {
-	// MinSimilarity is the minimum similarity threshold (0.0-1.0).
-	// Only patterns with similarity >= MinSimilarity are returned.
-	MinSimilarity float64
-
-	// MaxResults is the maximum number of results to return.
-	MaxResults int
-
-	// Tags optionally filters results by tag.
-	Tags []string
-
-	// PatternIDs filters results to only these specific pattern IDs.
-	// When set, only patterns whose ID is in this list are considered.
-	PatternIDs []uuid.UUID
-}
-
-// Match represents a similarity search result.
-type Match struct {
-	// Pattern is the matched pattern.
-	Pattern *Pattern
-
-	// Similarity is the cosine similarity score (0.0-1.0, where 1.0 is identical).
-	Similarity float64
-}

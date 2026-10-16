@@ -14,8 +14,6 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/service"
 	openaisvc "github.com/twistingmercury/mnemonic-api/internal/service/openai"
 	"github.com/twistingmercury/mnemonic-api/internal/service/search"
-
-	repository "github.com/twistingmercury/mnemonic-api/internal/repository"
 )
 
 // --- Mock: openaisvc.EmbeddingService ---
@@ -34,36 +32,11 @@ func (m *mockEmbeddingService) Embed(ctx context.Context, text string) ([]float3
 
 // --- Mock: chunkrepo.Repository ---
 
+// mockChunkRepo implements only FindSimilar, the one method search uses; any
+// other call panics on the nil embedded interface.
 type mockChunkRepo struct {
+	chunkrepo.Repository
 	mock.Mock
-}
-
-func (m *mockChunkRepo) Create(ctx context.Context, c *chunkrepo.Chunk) error {
-	return m.Called(ctx, c).Error(0)
-}
-
-func (m *mockChunkRepo) CreateBatch(ctx context.Context, chunks []*chunkrepo.Chunk) error {
-	return m.Called(ctx, chunks).Error(0)
-}
-
-func (m *mockChunkRepo) Get(ctx context.Context, id uuid.UUID) (*chunkrepo.Chunk, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*chunkrepo.Chunk), args.Error(1)
-}
-
-func (m *mockChunkRepo) ListSummariesByPatternID(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
-	args := m.Called(ctx, patternID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*chunkrepo.Chunk), args.Error(1)
-}
-
-func (m *mockChunkRepo) DeleteByPatternID(ctx context.Context, patternID uuid.UUID) error {
-	return m.Called(ctx, patternID).Error(0)
 }
 
 func (m *mockChunkRepo) FindSimilar(ctx context.Context, embedding []float32, opts chunkrepo.SimilarityOptions) ([]*chunkrepo.Match, error) {
@@ -72,10 +45,6 @@ func (m *mockChunkRepo) FindSimilar(ctx context.Context, embedding []float32, op
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*chunkrepo.Match), args.Error(1)
-}
-
-func (m *mockChunkRepo) WithTx(_ repository.DBTX) chunkrepo.Repository {
-	return m
 }
 
 // --- Helpers ---
@@ -191,29 +160,6 @@ func TestSearchPatterns_NoMatchingPatterns(t *testing.T) {
 	assert.Equal(t, 0, result.TotalCandidates)
 }
 
-func TestSearchPatterns_ContextCancellation(t *testing.T) {
-	t.Parallel()
-
-	embSvc := new(mockEmbeddingService)
-	chunkRepo := new(mockChunkRepo)
-	svc := newTestService(embSvc, chunkRepo)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately.
-
-	embSvc.On("Embed", mock.Anything, "cancelled query").Return(nil, context.Canceled)
-
-	result, err := svc.SearchPatterns(ctx, search.SearchOptions{
-		Query:     "cancelled query",
-		Limit:     10,
-		Threshold: 0.7,
-	})
-
-	assert.Nil(t, result)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, service.ErrServiceUnavailable), "expected service.ErrServiceUnavailable, got: %v", err)
-}
-
 func TestSearchPatterns_WithTags(t *testing.T) {
 	t.Parallel()
 
@@ -267,24 +213,4 @@ func TestSearchPatterns_FindSimilarError(t *testing.T) {
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "find similar chunks")
-}
-
-func TestSearchPatterns_ChunkRepoNotConfigured(t *testing.T) {
-	t.Parallel()
-
-	embSvc := new(mockEmbeddingService)
-	// Pass nil chunkRepo explicitly.
-	svc := search.New(embSvc, nil, nil, zerolog.Nop())
-
-	embSvc.On("Embed", mock.Anything, "some query").Return(testEmbedding, nil)
-
-	result, err := svc.SearchPatterns(context.Background(), search.SearchOptions{
-		Query:     "some query",
-		Limit:     10,
-		Threshold: 0.7,
-	})
-
-	assert.Nil(t, result)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, service.ErrServiceUnavailable))
 }

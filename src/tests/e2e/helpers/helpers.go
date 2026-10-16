@@ -45,14 +45,6 @@ func NewTestClient(t *testing.T) *TestClient {
 	}
 }
 
-// NewReadOnlyTestClient creates a client without admin role (developer only).
-func NewReadOnlyTestClient(t *testing.T) *TestClient {
-	t.Helper()
-	client := NewTestClient(t)
-	client.UserRoles = "developer"
-	return client
-}
-
 // NewUnauthenticatedClient creates a client without authentication headers.
 func NewUnauthenticatedClient(t *testing.T) *TestClient {
 	t.Helper()
@@ -82,44 +74,18 @@ func (c *TestClient) Do(req *http.Request) (*http.Response, error) {
 	return c.Client.Do(req)
 }
 
-// Get performs a GET request to the specified path.
-func (c *TestClient) Get(path string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, c.BaseURL+path, nil)
-	if err != nil {
-		return nil, err
+// Request sends method to path with authentication headers. A non-nil body
+// is sent as JSON.
+func (c *TestClient) Request(method, path string, body any) (*http.Response, error) {
+	var r io.Reader
+	if body != nil {
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		r = bytes.NewReader(jsonBody)
 	}
-	return c.Do(req)
-}
-
-// Post performs a POST request with JSON body.
-func (c *TestClient) Post(path string, body any) (*http.Response, error) {
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, c.BaseURL+path, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, err
-	}
-	return c.Do(req)
-}
-
-// Put performs a PUT request with JSON body.
-func (c *TestClient) Put(path string, body any) (*http.Response, error) {
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPut, c.BaseURL+path, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, err
-	}
-	return c.Do(req)
-}
-
-// Delete performs a DELETE request.
-func (c *TestClient) Delete(path string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+path, nil)
+	req, err := http.NewRequest(method, c.BaseURL+path, r)
 	if err != nil {
 		return nil, err
 	}
@@ -154,15 +120,6 @@ func AssertStatusCode(t *testing.T, resp *http.Response, expected int) {
 	if resp.StatusCode != expected {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected status %d, got %d\nBody: %s", expected, resp.StatusCode, string(body))
-	}
-}
-
-// AssertContentType verifies the Content-Type header.
-func AssertContentType(t *testing.T, resp *http.Response, expected string) {
-	t.Helper()
-	ct := resp.Header.Get("Content-Type")
-	if ct != expected {
-		t.Fatalf("expected Content-Type %q, got %q", expected, ct)
 	}
 }
 

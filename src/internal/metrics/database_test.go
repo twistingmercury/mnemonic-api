@@ -13,148 +13,49 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-func TestNewDatabase(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	dm, err := metrics.NewDatabase(meter)
-	require.NoError(t, err)
-	assert.NotNil(t, dm)
-}
-
-func TestDatabaseRecordQuery(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	dm, err := metrics.NewDatabase(meter)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	dm.RecordQuery(ctx, "postgres", "select", 50*time.Millisecond)
-	dm.RecordQuery(ctx, "postgres", "insert", 25*time.Millisecond)
-	dm.RecordQuery(ctx, "neo4j", "query", 100*time.Millisecond)
-
-	var data metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &data)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, data.ScopeMetrics)
-	foundQueryLatency := false
-	for _, sm := range data.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name == "mnemonic.db.query_latency" {
-				foundQueryLatency = true
-			}
-		}
-	}
-	assert.True(t, foundQueryLatency, "query latency metric should be recorded")
-}
-
-func TestDatabaseRecordError(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	dm, err := metrics.NewDatabase(meter)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	dm.RecordError(ctx, "postgres", "select")
-	dm.RecordError(ctx, "postgres", "insert")
-	dm.RecordError(ctx, "neo4j", "query")
-
-	var data metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &data)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, data.ScopeMetrics)
-	foundQueryErrors := false
-	for _, sm := range data.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name == "mnemonic.db.query_errors" {
-				foundQueryErrors = true
-			}
-		}
-	}
-	assert.True(t, foundQueryErrors, "query errors metric should be recorded")
-}
-
-func TestDatabaseRecordQueryWithError(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	dm, err := metrics.NewDatabase(meter)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Record successful query
-	dm.RecordQueryWithError(ctx, "postgres", "select", 50*time.Millisecond, nil)
-
-	// Record failed query
-	queryErr := errors.New("connection timeout")
-	dm.RecordQueryWithError(ctx, "postgres", "select", 5000*time.Millisecond, queryErr)
-
-	var data metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &data)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, data.ScopeMetrics)
-	foundQueryLatency := false
-	foundQueryErrors := false
-	for _, sm := range data.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name == "mnemonic.db.query_latency" {
-				foundQueryLatency = true
-			}
-			if m.Name == "mnemonic.db.query_errors" {
-				foundQueryErrors = true
-			}
-		}
-	}
-	assert.True(t, foundQueryLatency, "query latency metric should be recorded")
-	assert.True(t, foundQueryErrors, "query errors metric should be recorded for failed query")
-}
-
-func TestDatabaseWithMultipleDatabases(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	meter := provider.Meter("test")
-
-	dm, err := metrics.NewDatabase(meter)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Record metrics for multiple databases
-	databases := []string{"postgres", "pgvector", "neo4j"}
-	operations := []string{"select", "insert", "update", "delete"}
-
-	for _, db := range databases {
-		for _, op := range operations {
-			dm.RecordQuery(ctx, db, op, 10*time.Millisecond)
-		}
-	}
-
-	var data metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &data)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, data.ScopeMetrics)
-}
-
-// TestDatabaseRecordQuery_SubMillisecond verifies that sub-millisecond
-// latencies are recorded as fractions rather than truncated to zero.
-func TestDatabaseRecordQuery_SubMillisecond(t *testing.T) {
+// TestDatabaseRecord verifies that every operation records its latency and
+// only a failed one is counted as an error.
+func TestDatabaseRecord(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	dm, err := metrics.NewDatabase(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	dm.RecordQuery(ctx, "neo4j", "select", 500*time.Microsecond)
+	dm.Record(ctx, "neo4j", "select", 50*time.Millisecond, nil)
+	dm.Record(ctx, "neo4j", "select", 5000*time.Millisecond, errors.New("connection timeout"))
+
+	var data metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(ctx, &data))
+
+	var latencyCount uint64
+	var errorCount int64
+	for _, sm := range data.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			switch m.Name {
+			case "mnemonic.db.query_latency":
+				for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
+					latencyCount += dp.Count
+				}
+			case "mnemonic.db.query_errors":
+				for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
+					errorCount += dp.Value
+				}
+			}
+		}
+	}
+	assert.Equal(t, uint64(2), latencyCount, "both operations should record latency")
+	assert.Equal(t, int64(1), errorCount, "only the failed operation should be counted")
+}
+
+// TestDatabaseRecord_SubMillisecond verifies that sub-millisecond latencies
+// are recorded as fractions rather than truncated to zero.
+func TestDatabaseRecord_SubMillisecond(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	dm, err := metrics.NewDatabase(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	dm.Record(ctx, "neo4j", "select", 500*time.Microsecond, nil)
 
 	var data metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(ctx, &data))

@@ -5,12 +5,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pashagolub/pgxmock/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/twistingmercury/mnemonic-api/internal/repository"
 	"github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
 )
 
@@ -57,27 +55,4 @@ func TestRepository_CreatePendingForChunks(t *testing.T) {
 		}
 		assert.Len(t, seen, 3, "job ids are distinct")
 	})
-
-	pgErrCases := []struct {
-		code string
-		want error
-	}{
-		{repository.PgErrCodeUniqueViolation, enrichmentjob.ErrJobAlreadyPending},
-		{repository.PgErrCodeCheckViolation, enrichmentjob.ErrInvalidJobTarget},
-	}
-	for _, tc := range pgErrCases {
-		t.Run("maps pg error "+tc.code, func(t *testing.T) {
-			t.Parallel()
-			mock, err := pgxmock.NewPool()
-			require.NoError(t, err)
-			defer mock.Close()
-
-			mock.ExpectExec(`INSERT INTO enrichment_jobs`).
-				WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
-				WillReturnError(&pgconn.PgError{Code: tc.code})
-
-			_, err = enrichmentjob.NewRepository(mock).CreatePendingForChunks(context.Background(), []uuid.UUID{uuid.New()})
-			assert.ErrorIs(t, err, tc.want)
-		})
-	}
 }

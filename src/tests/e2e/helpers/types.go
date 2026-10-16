@@ -137,14 +137,6 @@ type ChunkListResponse struct {
 	Count  int            `json:"count"`
 }
 
-// HealthResponse represents health check response.
-// OpenAPI: api/openapi/mnemonic-v1.yaml:1185 (HealthResponse)
-type HealthResponse struct {
-	Status string            `json:"status"`
-	Checks map[string]string `json:"checks"`
-	Reason string            `json:"reason,omitempty"`
-}
-
 // VersionResponse represents version information response from GET /version.
 // Fields match the handler in internal/handlers/operations/operations.go.
 type VersionResponse struct {

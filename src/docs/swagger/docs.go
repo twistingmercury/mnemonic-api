@@ -107,7 +107,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/patterns.patternCreateRequest"
+                            "$ref": "#/definitions/patterns.patternRequest"
                         }
                     }
                 ],
@@ -276,7 +276,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/patterns.patternUpdateRequest"
+                            "$ref": "#/definitions/patterns.patternRequest"
                         }
                     }
                 ],
@@ -566,8 +566,23 @@ const docTemplate = `{
                 }
             }
         },
-        "patterns.patternCreateRequest": {
-            "description": "Request body for creating a new pattern",
+        "patterns.patternListResponse": {
+            "description": "Paginated list of pattern summaries",
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/patterns.patternSummaryResponse"
+                    }
+                },
+                "pagination": {
+                    "$ref": "#/definitions/handlers.Pagination"
+                }
+            }
+        },
+        "patterns.patternRequest": {
+            "description": "Request body for creating or updating a pattern",
             "type": "object",
             "properties": {
                 "content": {
@@ -602,21 +617,6 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string"
-                }
-            }
-        },
-        "patterns.patternListResponse": {
-            "description": "Paginated list of pattern summaries",
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/patterns.patternSummaryResponse"
-                    }
-                },
-                "pagination": {
-                    "$ref": "#/definitions/handlers.Pagination"
                 }
             }
         },
@@ -712,45 +712,6 @@ const docTemplate = `{
                     }
                 },
                 "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "patterns.patternUpdateRequest": {
-            "description": "Request body for updating an existing pattern",
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "domain": {
-                    "type": "string"
-                },
-                "entity_type": {
-                    "type": "string"
-                },
-                "language": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "related_patterns": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "version": {
                     "type": "string"
                 }
             }

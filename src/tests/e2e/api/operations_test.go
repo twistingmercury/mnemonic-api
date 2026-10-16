@@ -35,7 +35,7 @@ func metricsBaseURL() string {
 func TestAPIOnlyNetworkBoundary(t *testing.T) {
 	client := helpers.NewUnauthenticatedClient(t)
 
-	resp, err := client.Get("/mcp")
+	resp, err := client.Request(http.MethodGet, "/mcp", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /mcp: %v", err)
 	}
@@ -81,7 +81,7 @@ func isExpectedConnectionFailure(err error) bool {
 func TestHealthCheck_AllHealthyReturns200(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/health")
+	resp, err := client.Request(http.MethodGet, "/health", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /health: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestHealthCheck_AllHealthyReturns200(t *testing.T) {
 func TestHealthCheck_NoAuthRequired(t *testing.T) {
 	client := helpers.NewUnauthenticatedClient(t)
 
-	resp, err := client.Get("/health")
+	resp, err := client.Request(http.MethodGet, "/health", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /health without auth: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestHealthCheck_NoAuthRequired(t *testing.T) {
 func TestHealthCheck_ResponseContainsAllComponents(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/health")
+	resp, err := client.Request(http.MethodGet, "/health", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /health: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestHealthCheck_ResponseContainsAllComponents(t *testing.T) {
 func TestHealthCheck_ContentTypeIsJSON(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/health")
+	resp, err := client.Request(http.MethodGet, "/health", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /health: %v", err)
 	}
@@ -196,15 +196,6 @@ func TestHealthCheck_ContentTypeIsJSON(t *testing.T) {
 	}
 }
 
-// TestHealthCheck_UnhealthyReturns503 verifies that when a dependency is
-// down, the endpoint returns 503 Service Unavailable with status "Critical".
-//
-// Note: This test requires infrastructure manipulation (stopping a
-// dependency container) and is skipped in standard E2E runs.
-func TestHealthCheck_UnhealthyReturns503(t *testing.T) {
-	t.Skip("requires infrastructure manipulation")
-}
-
 // -----------------------------------------------------------------------------
 // Version (GET /version)
 // -----------------------------------------------------------------------------
@@ -214,7 +205,7 @@ func TestHealthCheck_UnhealthyReturns503(t *testing.T) {
 func TestVersion_ReturnsOKWithVersionInfo(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/version")
+	resp, err := client.Request(http.MethodGet, "/version", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /version: %v", err)
 	}
@@ -238,7 +229,7 @@ func TestVersion_ReturnsOKWithVersionInfo(t *testing.T) {
 func TestVersion_NoAuthRequired(t *testing.T) {
 	client := helpers.NewUnauthenticatedClient(t)
 
-	resp, err := client.Get("/version")
+	resp, err := client.Request(http.MethodGet, "/version", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /version without auth: %v", err)
 	}
@@ -252,7 +243,7 @@ func TestVersion_NoAuthRequired(t *testing.T) {
 func TestVersion_ContentTypeIsJSON(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/version")
+	resp, err := client.Request(http.MethodGet, "/version", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /version: %v", err)
 	}
@@ -270,7 +261,7 @@ func TestVersion_ContentTypeIsJSON(t *testing.T) {
 func TestVersion_FieldsArePresent(t *testing.T) {
 	client := helpers.NewTestClient(t)
 
-	resp, err := client.Get("/version")
+	resp, err := client.Request(http.MethodGet, "/version", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /version: %v", err)
 	}
@@ -352,7 +343,7 @@ func TestMetrics_NoAuthRequired(t *testing.T) {
 func TestSwaggerUI_ReturnsOK(t *testing.T) {
 	client := helpers.NewUnauthenticatedClient(t)
 
-	resp, err := client.Get("/swagger/index.html")
+	resp, err := client.Request(http.MethodGet, "/swagger/index.html", nil)
 	if err != nil {
 		t.Fatalf("failed to GET /swagger/index.html: %v", err)
 	}

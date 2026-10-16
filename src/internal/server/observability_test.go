@@ -18,11 +18,9 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/patterns"
-	"github.com/twistingmercury/mnemonic-api/internal/middleware"
 	"github.com/twistingmercury/mnemonic-api/internal/service"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -63,23 +61,8 @@ func TestProductionHTTPObservability(t *testing.T) {
 		{"conflict", 409, service.ErrConflict, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			exporter := tracetest.NewInMemoryExporter()
-			tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-			oldTP, oldProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
-			otel.SetTracerProvider(tp)
-			otel.SetTextMapPropagator(propagation.TraceContext{})
-			t.Cleanup(func() {
-				otel.SetTracerProvider(oldTP)
-				otel.SetTextMapPropagator(oldProp)
-				require.NoError(t, tp.Shutdown(context.Background()))
-			})
-			reader := sdkmetric.NewManualReader()
-			mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-			t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
-			rm, err := middleware.NewRequestMetrics(mp.Meter("test"))
-			require.NoError(t, err)
-			var logs bytes.Buffer
-			router := setupRouter(zerolog.New(&logs), rm)
+			exporter := useTraceExporter(t)
+			router, logs, reader := newObservedRouter(t)
 			var active trace.SpanContext
 			router.Use(func(c *gin.Context) { active = trace.SpanContextFromContext(c.Request.Context()); c.Next() })
 			if tc.panic {
@@ -168,86 +151,133 @@ func TestProductionHTTPObservability(t *testing.T) {
 			var data metricdata.ResourceMetrics
 			require.NoError(t, reader.Collect(context.Background(), &data))
 			assertCompletionMetrics(t, data, tc.status)
-			if tc.panic {
-				// Dispatch again through this same router and its pooled Gin contexts.
-				router.GET("/ready", func(c *gin.Context) { c.String(http.StatusOK, "ready") })
-				healthyReq := httptest.NewRequest(http.MethodGet, "/ready", nil)
-				healthyReq.Header.Set("X-Request-ID", "healthy-request-456")
-				healthy := httptest.NewRecorder()
-				router.ServeHTTP(healthy, healthyReq)
-				require.Equal(t, http.StatusOK, healthy.Code)
-				assert.Equal(t, "ready", healthy.Body.String())
-				assert.Equal(t, "healthy-request-456", healthy.Header().Get("X-Request-ID"))
-				allSpans := exporter.GetSpans()
-				require.Len(t, allSpans, 2)
-				successSpan := allSpans[1]
-				assert.True(t, successSpan.SpanContext.IsValid())
-				assert.Equal(t, active, successSpan.SpanContext)
-				assert.NotEqual(t, spans[0].SpanContext.TraceID(), successSpan.SpanContext.TraceID())
-				assert.False(t, successSpan.Parent.IsValid())
-				assert.Equal(t, codes.Unset, successSpan.Status.Code)
-				assert.Empty(t, successSpan.Status.Description)
-				assert.Empty(t, successSpan.Events)
-				assert.NotContains(t, fmt.Sprint(successSpan), "sentinel_failure")
-				allLines := strings.Split(strings.TrimSpace(logs.String()), "\n")
-				require.Len(t, allLines, 2)
-				var successLog map[string]any
-				require.NoError(t, json.Unmarshal([]byte(allLines[1]), &successLog))
-				assert.Equal(t, "info", successLog["level"])
-				assert.Equal(t, float64(http.StatusOK), successLog["status"])
-				assert.Equal(t, "request completed", successLog["message"])
-				assert.Equal(t, "/ready", successLog["route"])
-				assert.Equal(t, "healthy-request-456", successLog["request_id"])
-				assert.Equal(t, active.TraceID().String(), successLog["trace_id"])
-				assert.Equal(t, active.SpanID().String(), successLog["span_id"])
-				assert.NotContains(t, successLog, "error")
-				assert.NotContains(t, allLines[1], "sentinel_failure")
-				var after metricdata.ResourceMetrics
-				require.NoError(t, reader.Collect(context.Background(), &after))
-				assertCompletionMetrics(t, after, http.StatusInternalServerError, "/ready")
-			}
 		})
 	}
 }
 
+// useTraceExporter installs an in-memory tracer provider and the W3C trace
+// context propagator as globals for the test, and returns the span exporter.
+func useTraceExporter(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	oldTP, oldProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTracerProvider(oldTP)
+		otel.SetTextMapPropagator(oldProp)
+		require.NoError(t, tp.Shutdown(context.Background()))
+	})
+	return exporter
+}
+
+// newObservedRouter builds the production router with a manual metric reader
+// installed as the global meter provider and logs captured in a buffer.
+func newObservedRouter(t *testing.T) (*gin.Engine, *bytes.Buffer, *sdkmetric.ManualReader) {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
+	useMeterProvider(t, mp)
+	logs := new(bytes.Buffer)
+	return setupRouter(zerolog.New(logs)), logs, reader
+}
+
+// TestPanicLeavesRouterUsable dispatches a healthy request through the same
+// router and its pooled Gin contexts after a recovered panic, and checks that
+// none of the panic's trace, error or log state carries over.
+func TestPanicLeavesRouterUsable(t *testing.T) {
+	exporter := useTraceExporter(t)
+	router, logs, reader := newObservedRouter(t)
+	var active trace.SpanContext
+	router.Use(func(c *gin.Context) { active = trace.SpanContextFromContext(c.Request.Context()); c.Next() })
+	router.GET("/v1/api/patterns/search", func(*gin.Context) { panic("sentinel_failure") })
+	router.GET("/ready", func(c *gin.Context) { c.String(http.StatusOK, "ready") })
+
+	panicReq := httptest.NewRequest(http.MethodGet, "/v1/api/patterns/search", nil)
+	panicReq.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	router.ServeHTTP(httptest.NewRecorder(), panicReq)
+
+	healthyReq := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	healthyReq.Header.Set("X-Request-ID", "healthy-request-456")
+	healthy := httptest.NewRecorder()
+	router.ServeHTTP(healthy, healthyReq)
+	require.Equal(t, http.StatusOK, healthy.Code)
+	assert.Equal(t, "ready", healthy.Body.String())
+	assert.Equal(t, "healthy-request-456", healthy.Header().Get("X-Request-ID"))
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 2)
+	successSpan := spans[1]
+	assert.True(t, successSpan.SpanContext.IsValid())
+	assert.Equal(t, active, successSpan.SpanContext)
+	assert.NotEqual(t, spans[0].SpanContext.TraceID(), successSpan.SpanContext.TraceID())
+	assert.False(t, successSpan.Parent.IsValid())
+	assert.Equal(t, codes.Unset, successSpan.Status.Code)
+	assert.Empty(t, successSpan.Status.Description)
+	assert.Empty(t, successSpan.Events)
+	assert.NotContains(t, fmt.Sprint(successSpan), "sentinel_failure")
+
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	require.Len(t, lines, 2)
+	var successLog map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &successLog))
+	assert.Equal(t, "info", successLog["level"])
+	assert.Equal(t, float64(http.StatusOK), successLog["status"])
+	assert.Equal(t, "request completed", successLog["message"])
+	assert.Equal(t, "/ready", successLog["route"])
+	assert.Equal(t, "healthy-request-456", successLog["request_id"])
+	assert.Equal(t, active.TraceID().String(), successLog["trace_id"])
+	assert.Equal(t, active.SpanID().String(), successLog["span_id"])
+	assert.NotContains(t, successLog, "error")
+	assert.NotContains(t, lines[1], "sentinel_failure")
+
+	var data metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &data))
+	assertCompletionMetrics(t, data, http.StatusInternalServerError, "/ready")
+}
+
+// useMeterProvider installs mp as the global meter provider for the test, the
+// way otelx does in production, so otelgin records into it.
+func useMeterProvider(t *testing.T, mp *sdkmetric.MeterProvider) {
+	t.Helper()
+	old := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(old) })
+}
+
+// assertCompletionMetrics checks that otelgin recorded exactly one
+// http.server.request.duration observation for the search route with status,
+// plus one 200 for each of successRoutes.
 func assertCompletionMetrics(t *testing.T, data metricdata.ResourceMetrics, status int, successRoutes ...string) {
 	t.Helper()
-	expected := attribute.NewSet(attribute.String("http.method", "GET"), attribute.String("http.route", "/v1/api/patterns/search"), attribute.String("http.status_code", fmt.Sprint(status)))
-	expectedSeries := map[attribute.Distinct]bool{expected.Equivalent(): true}
-	for _, route := range successRoutes {
-		labels := attribute.NewSet(attribute.String("http.method", "GET"), attribute.String("http.route", route), attribute.String("http.status_code", "200"))
-		expectedSeries[labels.Equivalent()] = true
+	type series struct {
+		route  string
+		status int64
 	}
-	found := map[string]bool{}
+	want := map[series]bool{{"/v1/api/patterns/search", int64(status)}: true}
+	for _, route := range successRoutes {
+		want[series{route, http.StatusOK}] = true
+	}
+	var found bool
 	for _, scope := range data.ScopeMetrics {
 		for _, m := range scope.Metrics {
-			found[m.Name] = true
-			switch m.Name {
-			case "mnemonic.http.request.count":
-				assert.Equal(t, "{request}", m.Unit)
-				sum := m.Data.(metricdata.Sum[int64])
-				require.Len(t, sum.DataPoints, len(expectedSeries))
-				for _, point := range sum.DataPoints {
-					assert.True(t, expectedSeries[point.Attributes.Equivalent()], "unexpected count series: %v", point.Attributes)
-					assert.EqualValues(t, 1, point.Value)
-				}
-			case "mnemonic.http.request.duration":
-				assert.Equal(t, "ms", m.Unit)
-				hist := m.Data.(metricdata.Histogram[float64])
-				require.Len(t, hist.DataPoints, len(expectedSeries))
-				for _, point := range hist.DataPoints {
-					assert.True(t, expectedSeries[point.Attributes.Equivalent()], "unexpected duration series: %v", point.Attributes)
-					assert.EqualValues(t, 1, point.Count)
-					assert.GreaterOrEqual(t, point.Sum, float64(0))
-				}
-			case "mnemonic.http.request.in_flight":
-				sum := m.Data.(metricdata.Sum[int64])
-				require.Len(t, sum.DataPoints, 1)
-				assert.Zero(t, sum.DataPoints[0].Value)
+			if m.Name != "http.server.request.duration" {
+				continue
+			}
+			found = true
+			hist := m.Data.(metricdata.Histogram[float64])
+			require.Len(t, hist.DataPoints, len(want))
+			for _, point := range hist.DataPoints {
+				route, _ := point.Attributes.Value("http.route")
+				code, _ := point.Attributes.Value("http.response.status_code")
+				assert.True(t, want[series{route.AsString(), code.AsInt64()}], "unexpected duration series: %v", point.Attributes)
+				assert.EqualValues(t, 1, point.Count)
 			}
 		}
 	}
-	assert.Len(t, found, 3)
+	assert.True(t, found, "otelgin should record http.server.request.duration")
 }
 
 // TestRequestIDBoundedAlphabet pins the documented X-Request-ID contract: echo an
@@ -270,13 +300,7 @@ func TestRequestIDBoundedAlphabet(t *testing.T) {
 		{"non-ascii", "abcdéf", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reader := sdkmetric.NewManualReader()
-			mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-			t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
-			rm, err := middleware.NewRequestMetrics(mp.Meter("test"))
-			require.NoError(t, err)
-			var logs bytes.Buffer
-			router := setupRouter(zerolog.New(&logs), rm)
+			router, logs, _ := newObservedRouter(t)
 			router.GET("/echo", func(c *gin.Context) { c.Status(http.StatusOK) })
 			req := httptest.NewRequest(http.MethodGet, "/echo", nil)
 			if tc.header != "" {
@@ -307,21 +331,11 @@ func TestProductionHTTPNoTraceAndSkips(t *testing.T) {
 	// A noop provider supplies no locally active span or invented trace identity.
 	otel.SetTracerProvider(trace.NewNoopTracerProvider())
 	t.Cleanup(func() { otel.SetTracerProvider(oldTP) })
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { require.NoError(t, mp.Shutdown(context.Background())) })
-	rm, err := middleware.NewRequestMetrics(mp.Meter("test"))
-	require.NoError(t, err)
-	var logs bytes.Buffer
-	router := setupRouter(zerolog.New(&logs), rm)
-	for _, path := range []string{"/health", "/metrics"} {
-		router.GET(path, func(c *gin.Context) { c.Status(200) })
-	}
-	for _, path := range []string{"/health", "/metrics"} {
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		assert.Equal(t, 200, w.Code)
-	}
+	router, logs, reader := newObservedRouter(t)
+	router.GET("/health", func(c *gin.Context) { c.Status(200) })
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/health", nil))
+	assert.Equal(t, 200, w.Code)
 	assert.Empty(t, logs.String())
 	var data metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &data))
@@ -329,7 +343,7 @@ func TestProductionHTTPNoTraceAndSkips(t *testing.T) {
 	router.GET("/failure", func(c *gin.Context) { handlers.RespondError(c, errors.New("failure")) })
 	req := httptest.NewRequest("GET", "/failure", nil)
 	req.Header.Set("X-Request-ID", strings.Repeat("x", 129))
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	var problem handlers.ProblemDetail
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem))
@@ -338,4 +352,23 @@ func TestProductionHTTPNoTraceAndSkips(t *testing.T) {
 	assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
 	assert.Len(t, w.Header().Get("X-Request-ID"), 36)
 	assert.NotContains(t, logs.String(), "trace_id")
+}
+
+// TestTracingSkipsHealth verifies that a normal route records a server span
+// and the /health probe does not.
+func TestTracingSkipsHealth(t *testing.T) {
+	exporter := useTraceExporter(t)
+	router := setupRouter(zerolog.Nop())
+	for _, path := range []string{"/health", "/v1/api/thing"} {
+		router.GET(path, func(c *gin.Context) { c.Status(http.StatusOK) })
+	}
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/health", nil))
+	assert.Empty(t, exporter.GetSpans(), "/health must not be traced")
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/api/thing", nil))
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, trace.SpanKindServer, spans[0].SpanKind)
+	assert.Contains(t, spans[0].Name, "/v1/api/thing")
 }

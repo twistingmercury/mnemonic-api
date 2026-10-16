@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 
+	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
 )
 
@@ -54,7 +55,7 @@ func TestPublish_ReconnectDelayDoesNotBlockOtherPublishers(t *testing.T) {
 	ch := &fakeChannel{failFirst: 1}
 	var dials atomic.Int32
 	p := rabbitmq.NewTestPublisher(
-		rabbitmq.PublisherConfig{Queue: "q", ReconnectDelay: delay},
+		config.RabbitMQConfig{Queue: "q", ReconnectDelay: delay},
 		failuresCounter(t),
 		ch,
 		func() (io.Closer, rabbitmq.Channel, error) {
@@ -85,7 +86,7 @@ func TestPublish_ConcurrentFailuresReconnectOnce(t *testing.T) {
 	broken := &fakeChannel{failFirst: 1 << 30}
 	var dials atomic.Int32
 	p := rabbitmq.NewTestPublisher(
-		rabbitmq.PublisherConfig{Queue: "q", ReconnectDelay: 20 * time.Millisecond},
+		config.RabbitMQConfig{Queue: "q", ReconnectDelay: 20 * time.Millisecond},
 		failuresCounter(t),
 		broken,
 		func() (io.Closer, rabbitmq.Channel, error) {
@@ -113,7 +114,7 @@ func TestPublish_ReconnectFailureAndCancellation(t *testing.T) {
 	t.Run("dial failure is returned", func(t *testing.T) {
 		t.Parallel()
 		p := rabbitmq.NewTestPublisher(
-			rabbitmq.PublisherConfig{Queue: "q"},
+			config.RabbitMQConfig{Queue: "q"},
 			failuresCounter(t),
 			&fakeChannel{failFirst: 1},
 			func() (io.Closer, rabbitmq.Channel, error) { return nil, nil, errors.New("broker down") },
@@ -129,7 +130,7 @@ func TestPublish_ReconnectFailureAndCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		p := rabbitmq.NewTestPublisher(
-			rabbitmq.PublisherConfig{Queue: "q", ReconnectDelay: time.Hour},
+			config.RabbitMQConfig{Queue: "q", ReconnectDelay: time.Hour},
 			failuresCounter(t),
 			&fakeChannel{failFirst: 1},
 			func() (io.Closer, rabbitmq.Channel, error) {
@@ -162,7 +163,7 @@ func TestPublisherConnected(t *testing.T) {
 	t.Parallel()
 
 	newPublisher := func(conn io.Closer, ch rabbitmq.Channel) *rabbitmq.Publisher {
-		p := rabbitmq.NewTestPublisher(rabbitmq.PublisherConfig{Queue: "q"}, failuresCounter(t), ch, nil)
+		p := rabbitmq.NewTestPublisher(config.RabbitMQConfig{Queue: "q"}, failuresCounter(t), ch, nil)
 		p.SetConnForTest(conn)
 		return p
 	}

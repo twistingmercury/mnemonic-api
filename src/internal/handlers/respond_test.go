@@ -177,23 +177,6 @@ func TestParseIntQueryStrict(t *testing.T) {
 	}
 }
 
-func TestRespondValidationError(t *testing.T) {
-	t.Parallel()
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
-
-	handlers.RespondValidationError(c, "bad fields", []handlers.FieldError{
-		{Field: "name", Code: "REQUIRED", Message: "name is required"},
-	})
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	body := w.Body.String()
-	assert.Contains(t, body, "validation-error")
-	assert.Contains(t, body, "REQUIRED")
-	assert.Contains(t, body, "name is required")
-}
-
 func TestRespondValidationTraceIdentity(t *testing.T) {
 	t.Parallel()
 	for _, valid := range []bool{false, true} {

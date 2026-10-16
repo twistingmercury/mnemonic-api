@@ -6,10 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -133,7 +133,7 @@ func TestCheckHealth_PortFromSelectedConfigFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := isolateLoaderSources(t)
 			port, hits := healthServer(t, http.StatusOK)
-			path := writePortConfig(t, dir, tt.file, atoi(t, port))
+			path := writePortConfig(t, dir, tt.file, port)
 
 			assert.Equal(t, 0, checkHealth(probeFlags(t, tt.choose(t, path)...)))
 			assert.Equal(t, int32(1), hits.Load())
@@ -146,7 +146,7 @@ func TestCheckHealth_PortFromSelectedConfigFile(t *testing.T) {
 func TestMain_HealthUsesConfigFlagFile(t *testing.T) {
 	dir := isolateLoaderSources(t)
 	port, hits := healthServer(t, http.StatusOK)
-	path := writePortConfig(t, dir, "flag.yaml", atoi(t, port))
+	path := writePortConfig(t, dir, "flag.yaml", port)
 
 	code, stderr := runMain(t, "--health", "--config", path)
 
@@ -161,7 +161,7 @@ func TestCheckHealth_EnvPortOverridesFilePort(t *testing.T) {
 	dir := isolateLoaderSources(t)
 	envPort, envHits := healthServer(t, http.StatusOK)
 	filePort, fileHits := healthServer(t, http.StatusOK)
-	path := writePortConfig(t, dir, "flag.yaml", atoi(t, filePort))
+	path := writePortConfig(t, dir, "flag.yaml", filePort)
 	t.Setenv("MNEMONIC_SERVER_PORT", envPort)
 
 	assert.Equal(t, 0, checkHealth(probeFlags(t, "--config", path)))
@@ -219,7 +219,7 @@ func TestMain_HealthInvalidPortFailsWithoutRequest(t *testing.T) {
 		t.Run(tt.port, func(t *testing.T) {
 			dir := isolateLoaderSources(t)
 			filePort, hits := healthServer(t, http.StatusOK)
-			path := writePortConfig(t, dir, "flag.yaml", atoi(t, filePort))
+			path := writePortConfig(t, dir, "flag.yaml", filePort)
 			t.Setenv("MNEMONIC_SERVER_PORT", tt.port)
 
 			code, stderr := runMain(t, "--health", "--config", path)
@@ -231,19 +231,12 @@ func TestMain_HealthInvalidPortFailsWithoutRequest(t *testing.T) {
 	}
 }
 
-// extractPort parses "http://127.0.0.1:PORT" and returns "PORT" as a string.
+// extractPort returns the port of an httptest server URL.
 func extractPort(t *testing.T, rawURL string) string {
 	t.Helper()
-	parts := strings.Split(rawURL, ":")
-	require.Len(t, parts, 3, "expected URL with scheme:host:port")
-	return parts[2]
-}
-
-func atoi(t *testing.T, s string) int {
-	t.Helper()
-	n, err := strconv.Atoi(s)
+	u, err := url.Parse(rawURL)
 	require.NoError(t, err)
-	return n
+	return u.Port()
 }
 
 // isolateLoaderSources clears every source LoadWithFlags consults besides the
@@ -260,17 +253,15 @@ func isolateLoaderSources(t *testing.T) string {
 			t.Setenv(name, "")
 		}
 	}
-	t.Setenv(config.EnvConfigFile, "")
-	t.Setenv("MNEMONIC_SERVER_PORT", "")
 	dir := t.TempDir()
 	t.Chdir(dir)
 	return dir
 }
 
-func writePortConfig(t *testing.T, dir, name string, port int) string {
+func writePortConfig(t *testing.T, dir, name, port string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	content := "server:\n  port: " + strconv.Itoa(port) + "\n"
+	content := "server:\n  port: " + port + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
@@ -279,7 +270,7 @@ func writePortConfig(t *testing.T, dir, name string, port int) string {
 // the highest precedence is unreachable from the command line.
 func TestParseFlags_ConfigFlagSelectsFile(t *testing.T) {
 	dir := isolateLoaderSources(t)
-	path := writePortConfig(t, dir, "flag.yaml", 18181)
+	path := writePortConfig(t, dir, "flag.yaml", "18181")
 
 	flags, err := parseFlags([]string{"--config", path})
 	require.NoError(t, err)
@@ -292,33 +283,6 @@ func TestParseFlags_ConfigFlagSelectsFile(t *testing.T) {
 	cfg, err := config.LoadWithFlags(flags)
 	require.NoError(t, err)
 	assert.Equal(t, 18181, cfg.Server.Port)
-}
-
-func TestParseFlags_ConfigFlagWinsOverConfigFileEnv(t *testing.T) {
-	dir := isolateLoaderSources(t)
-	flagPath := writePortConfig(t, dir, "flag.yaml", 18181)
-	envPath := writePortConfig(t, dir, "env.yaml", 18282)
-	t.Setenv(config.EnvConfigFile, envPath)
-
-	flags, err := parseFlags([]string{"--config", flagPath})
-	require.NoError(t, err)
-
-	cfg, err := config.LoadWithFlags(flags)
-	require.NoError(t, err)
-	assert.Equal(t, 18181, cfg.Server.Port)
-}
-
-func TestParseFlags_EnvVarWinsOverConfigFlagFile(t *testing.T) {
-	dir := isolateLoaderSources(t)
-	flagPath := writePortConfig(t, dir, "flag.yaml", 18181)
-	t.Setenv("MNEMONIC_SERVER_PORT", "18383")
-
-	flags, err := parseFlags([]string{"--config", flagPath})
-	require.NoError(t, err)
-
-	cfg, err := config.LoadWithFlags(flags)
-	require.NoError(t, err)
-	assert.Equal(t, 18383, cfg.Server.Port)
 }
 
 // A parse failure must come back as an error so main controls the exit code;

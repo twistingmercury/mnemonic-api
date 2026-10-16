@@ -6,25 +6,29 @@ import (
 	"fmt"
 	"net/http"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/otel/metric"
-	"golang.org/x/sync/errgroup"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/otel"
 
 	"github.com/google/uuid"
+	_ "github.com/twistingmercury/mnemonic-api/docs/swagger"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/database/graphdb"
 	"github.com/twistingmercury/mnemonic-api/internal/database/vectordb"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/operations"
+	patternhandler "github.com/twistingmercury/mnemonic-api/internal/handlers/patterns"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
 	"github.com/twistingmercury/mnemonic-api/internal/metrics"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
-	"github.com/twistingmercury/mnemonic-api/internal/queue"
 	"github.com/twistingmercury/mnemonic-api/internal/queue/rabbitmq"
 	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	enrichmentjobrepo "github.com/twistingmercury/mnemonic-api/internal/repository/enrichmentjob"
@@ -51,13 +55,12 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 		return fmt.Errorf("failed to initialize telemetry: %w", err)
 	}
 	defer func() {
-		logger := tel.Logger()
 		if shutdownErr := tel.Shutdown(context.Background()); shutdownErr != nil {
-			logger.Error().Err(shutdownErr).Msg("telemetry shutdown error")
+			tel.Logger.Error().Err(shutdownErr).Msg("telemetry shutdown error")
 		}
 	}()
 
-	logger := tel.Logger()
+	logger := tel.Logger
 	logger.Info().
 		Str("host", cfg.Server.Host).
 		Int("admin_port", cfg.Server.Port).
@@ -73,7 +76,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	defer closeDatabases(pgPool, neo4jDriver, logger)
 
 	// Wire all dependencies.
-	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"), tel.MetricsRegistry())
+	patternHandler, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("failed to wire dependencies: %w", err)
 	}
@@ -83,40 +86,22 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 		}
 	}()
 
-	// Initialize health checks with the real connections.
-	queueConn, _ := pub.(health.QueueConnection)
-	if err := health.Initialize(health.Dependencies{
+	// Build the Admin API router.
+	router := setupRouter(logger)
+	operations.SetupHandlers(router, health.Descriptors(health.Dependencies{
 		PGPool:      pgPool,
 		Neo4jDriver: neo4jDriver,
 		OpenAI:      cfg.OpenAI,
-		Queue:       queueConn,
-	}); err != nil {
-		return fmt.Errorf("failed to initialize health checks: %w", err)
-	}
-
-	// Create request metrics middleware.
-	requestMetrics, err := middleware.NewRequestMetrics(tel.Meter("mnemonic/http"))
-	if err != nil {
-		return fmt.Errorf("failed to create request metrics: %w", err)
-	}
-
-	// Build the Admin API router.
-	router := setupRouter(logger, requestMetrics)
-	operations.SetupHandlers(router, health.Descriptors())
-	RegisterAPIRoutes(router, svc, cfg.Vocabulary)
+		Queue:       pub,
+	}))
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	patternHandler.RegisterRoutes(router.Group("/v1/api"))
 
 	// Build the Admin API HTTP server.
 	adminServer := CreateHTTPServer(router, cfg)
 
-	// Run the Admin API.
-	g, gCtx := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		return runHTTPServer(gCtx, adminServer, cfg, logger, "admin_api")
-	})
-
-	// Wait for shutdown signal or component failure.
-	if err := g.Wait(); err != nil {
+	// Run the Admin API until a shutdown signal or a listener failure.
+	if err := runHTTPServer(ctx, adminServer, cfg, logger); err != nil {
 		return err
 	}
 
@@ -165,15 +150,20 @@ func closeDatabases(pgPool *pgxpool.Pool, neo4jDriver neo4j.DriverWithContext, l
 }
 
 // wireDependencies creates all repositories, services, and the RabbitMQ
-// publisher. Returns the route Services and Publisher.
+// publisher. Returns the REST API handler and the publisher.
 func wireDependencies(
 	pgPool *pgxpool.Pool,
 	neo4jDriver neo4j.DriverWithContext,
 	cfg *config.MnemonicConfig,
 	logger zerolog.Logger,
-	meter metric.Meter,
-	registry *metrics.Registry,
-) (Services, queue.Publisher, error) {
+) (*patternhandler.Handler, *rabbitmq.Publisher, error) {
+	// Telemetry installs its meter provider globally, so the instruments are
+	// created from otel.Meter.
+	registry, err := metrics.NewRegistry(otel.Meter("mnemonic"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("create metrics registry: %w", err)
+	}
+
 	// Repositories.
 	patternRepo := patternrepo.NewRepository(pgPool)
 	enrichmentJobRepo := enrichmentjobrepo.NewRepository(pgPool)
@@ -184,46 +174,32 @@ func wireDependencies(
 	embeddingSvc := openaisvc.NewEmbeddingService(cfg.OpenAI)
 
 	// Publisher.
-	pub, err := rabbitmq.NewPublisher(rabbitmq.PublisherConfig{
-		Host:           cfg.Queue.RabbitMQ.Host,
-		Port:           cfg.Queue.RabbitMQ.Port,
-		User:           cfg.Queue.RabbitMQ.User,
-		Password:       cfg.Queue.RabbitMQ.Password,
-		VHost:          cfg.Queue.RabbitMQ.VHost,
-		Queue:          cfg.Queue.RabbitMQ.Queue,
-		ReconnectDelay: cfg.Queue.RabbitMQ.ReconnectDelay,
-	}, meter)
+	pub, err := rabbitmq.NewPublisher(cfg.Queue.RabbitMQ, otel.Meter("mnemonic/queue"))
 	if err != nil {
-		return Services{}, nil, fmt.Errorf("wire publisher: %w", err)
+		return nil, nil, fmt.Errorf("wire publisher: %w", err)
 	}
 
 	// Domain services.
 	searchSvc := searchsvc.New(embeddingSvc, chunkRepo, registry.Patterns, logger)
 	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, pgPool, chunkRepo, pub, logger)
 
-	// REST API services.
-	svc := Services{
-		Pattern: patternSvc,
-		Search:  searchSvc,
-	}
-
-	return svc, pub, nil
+	return patternhandler.New(patternSvc, searchSvc, cfg.Vocabulary), pub, nil
 }
 
 // runHTTPServer starts the admin API HTTP server and gracefully shuts it down
 // when the context is cancelled.
-func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicConfig, logger zerolog.Logger, name string) error {
+func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicConfig, logger zerolog.Logger) error {
 	errCh := make(chan error, 1)
 
 	go func() {
 		logger.Info().
 			Str("addr", srv.Addr).
-			Str("component", name).
+			Str("component", "admin_api").
 			Msg("HTTP server listening")
 
 		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("%s server error: %w", name, err)
+			errCh <- fmt.Errorf("admin_api server error: %w", err)
 		}
 		close(errCh)
 	}()
@@ -237,15 +213,15 @@ func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicCo
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
 
-	logger.Info().Str("component", name).Msg("shutting down HTTP server")
+	logger.Info().Str("component", "admin_api").Msg("shutting down HTTP server")
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("%s shutdown error: %w", name, err)
+		return fmt.Errorf("admin_api shutdown error: %w", err)
 	}
 	return nil
 }
 
 // setupRouter creates and configures the Gin router with middleware.
-func setupRouter(logger zerolog.Logger, requestMetrics *middleware.RequestMetrics) *gin.Engine {
+func setupRouter(logger zerolog.Logger) *gin.Engine {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		// Only a bounded identifier alphabet may enter headers and private logs.
@@ -264,10 +240,13 @@ func setupRouter(logger zerolog.Logger, requestMetrics *middleware.RequestMetric
 		c.Header("X-Request-ID", rid)
 		c.Next()
 	})
-	skipPaths := middleware.DefaultSkipPaths
-	router.Use(middleware.TracingMiddlewareWithSkipPaths(version.Service, skipPaths))
+	// /health is polled by probes; keep it out of traces, metrics and logs.
+	// /metrics is served on the otelx metrics port, not on this router.
+	skipPaths := []string{"/health"}
+	router.Use(otelgin.Middleware(version.Service, otelgin.WithFilter(func(r *http.Request) bool {
+		return !slices.Contains(skipPaths, r.URL.Path)
+	})))
 	router.Use(middleware.CompletionLogging(logger, skipPaths))
-	router.Use(requestMetrics.MiddlewareWithSkipPaths(skipPaths))
 	// Recovery must be inside every completion wrapper. Do not use Gin's default
 	// recovery, which prints raw panic values and request headers to stderr.
 	router.Use(func(c *gin.Context) {

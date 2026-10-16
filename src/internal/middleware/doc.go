@@ -1,7 +1,6 @@
-// Package middleware provides Gin middleware for HTTP request metrics and
-// distributed tracing. It instruments incoming requests with OpenTelemetry
-// spans and records request count, duration, and in-flight metrics with
-// configurable path exclusions.
+// Package middleware provides Gin middleware for request completion logging.
+// It writes one bounded, redacted summary per request, correlated with the
+// OpenTelemetry span that otelgin starts, with configurable path exclusions.
 //
 // Documentation:
 //   - Architecture: docs/architecture/07-observability-architecture.md (Metrics (Prometheus) > Application Metrics)

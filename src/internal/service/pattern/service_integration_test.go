@@ -118,7 +118,7 @@ func TestIntegration_CreateIsAtomic(t *testing.T) {
 	// transaction.
 	overlong := "[//]: pattern\n## " + strings.Repeat("T", 300) + "\nBody."
 
-	_, err := svc.Create(ctx, patternsvc.CreateInput{Name: name, Content: overlong})
+	_, err := svc.Create(ctx, patternsvc.Input{Name: name, Content: overlong})
 	require.Error(t, err, "an over-long section title must fail the create")
 
 	patterns, chunks, jobs := countsFor(t, pool, name)
@@ -128,7 +128,7 @@ func TestIntegration_CreateIsAtomic(t *testing.T) {
 	assert.Empty(t, pub.published, "nothing may be published for a rolled-back create")
 
 	// The name is free, so the caller's retry is not a dead end.
-	created, err := svc.Create(ctx, patternsvc.CreateInput{Name: name, Content: integrationContent})
+	created, err := svc.Create(ctx, patternsvc.Input{Name: name, Content: integrationContent})
 	require.NoError(t, err, "retry after rollback must succeed")
 	require.NotNil(t, created)
 
@@ -159,7 +159,7 @@ func TestIntegration_UpdateResetsEnrichedParent(t *testing.T) {
 		enriched bool
 	}{
 		{name: "enriched parent", status: "enriched", enriched: true},
-		{name: "failed parent", status: "failed", errMsg: ptr("embedding provider rejected the request")},
+		{name: "failed parent", status: "failed", errMsg: new("embedding provider rejected the request")},
 	} {
 		t.Run(seeded.name, func(t *testing.T) {
 			patternName := uniqueName(t)
@@ -167,7 +167,7 @@ func TestIntegration_UpdateResetsEnrichedParent(t *testing.T) {
 				_, _ = pool.Exec(ctx, `delete from patterns where name = $1`, patternName)
 			})
 
-			created, err := svc.Create(ctx, patternsvc.CreateInput{Name: patternName, Content: integrationContent})
+			created, err := svc.Create(ctx, patternsvc.Input{Name: patternName, Content: integrationContent})
 			require.NoError(t, err)
 
 			// Seed the terminal state the enricher would have produced,
@@ -186,7 +186,7 @@ func TestIntegration_UpdateResetsEnrichedParent(t *testing.T) {
 
 			pub.published = nil
 
-			_, err = svc.Update(ctx, created.ID, patternsvc.UpdateInput{
+			_, err = svc.Update(ctx, created.ID, patternsvc.Input{
 				Name:    patternName,
 				Content: "[//]: pattern\n## Rationale\nWhy it exists.",
 			})
@@ -237,7 +237,7 @@ func TestIntegration_CreateBatchesChunksAndJobs(t *testing.T) {
 	})
 
 	content := integrationContent + "\n\n[//]: pattern\n## Limits\nNone."
-	created, err := svc.Create(ctx, patternsvc.CreateInput{Name: name, Content: content})
+	created, err := svc.Create(ctx, patternsvc.Input{Name: name, Content: content})
 	require.NoError(t, err)
 
 	rows, err := pool.Query(ctx, `
@@ -276,5 +276,3 @@ func TestIntegration_CreateBatchesChunksAndJobs(t *testing.T) {
 		assert.Empty(t, c.Content, "summaries never load content")
 	}
 }
-
-func ptr[T any](v T) *T { return &v }

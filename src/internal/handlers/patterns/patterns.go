@@ -20,10 +20,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
+	chunkrepo "github.com/twistingmercury/mnemonic-api/internal/repository/chunk"
 	patternrepo "github.com/twistingmercury/mnemonic-api/internal/repository/pattern"
 	patternsvc "github.com/twistingmercury/mnemonic-api/internal/service/pattern"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
 )
+
+// timeFormat is the RFC 3339 UTC layout, to the second, used for every
+// timestamp in responses.
+const timeFormat = "2006-01-02T15:04:05Z"
 
 // kebabCaseRe matches lowercase kebab-case identifiers (e.g., "go-pattern", "go-error-handling").
 var kebabCaseRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -38,15 +43,11 @@ type Handler struct {
 
 // New creates a new pattern Handler backed by the given services and vocabulary config.
 func New(patternSvc patternsvc.Service, searchSvc searchsvc.Service, vocab config.VocabularyConfig) *Handler {
-	langs := make([]string, len(vocab.Languages))
-	copy(langs, vocab.Languages)
-	doms := make([]string, len(vocab.Domains))
-	copy(doms, vocab.Domains)
 	return &Handler{
 		patternSvc:       patternSvc,
 		searchSvc:        searchSvc,
-		allowedLanguages: langs,
-		allowedDomains:   doms,
+		allowedLanguages: vocab.Languages,
+		allowedDomains:   vocab.Domains,
 	}
 }
 
@@ -64,23 +65,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // --- Request/Response Types ---
 
-// patternCreateRequest maps the OpenAPI PatternCreate schema.
-// @Description Request body for creating a new pattern
-type patternCreateRequest struct {
-	Name            string   `json:"name"`
-	Description     *string  `json:"description"`
-	Content         string   `json:"content"`
-	Tags            []string `json:"tags"`
-	EntityType      string   `json:"entity_type"`
-	Language        string   `json:"language"`
-	Domain          string   `json:"domain"`
-	Version         *string  `json:"version"`
-	RelatedPatterns []string `json:"related_patterns"`
-}
-
-// patternUpdateRequest maps the OpenAPI PatternUpdate schema.
-// @Description Request body for updating an existing pattern
-type patternUpdateRequest struct {
+// patternRequest maps the OpenAPI PatternCreate and PatternUpdate schemas,
+// which have the same fields.
+// @Description Request body for creating or updating a pattern
+type patternRequest struct {
 	Name            string   `json:"name"`
 	Description     *string  `json:"description"`
 	Content         string   `json:"content"`
@@ -227,12 +215,12 @@ func toPatternResponse(p *patternrepo.Pattern, graph *patternsvc.GraphContext) p
 		RelatedPatterns:  relatedPatterns,
 		EnrichmentStatus: p.EnrichmentStatus,
 		EnrichmentError:  p.EnrichmentError,
-		CreatedAt:        p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:        p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		CreatedAt:        p.CreatedAt.UTC().Format(timeFormat),
+		UpdatedAt:        p.UpdatedAt.UTC().Format(timeFormat),
 	}
 
 	if p.EnrichedAt != nil {
-		s := p.EnrichedAt.UTC().Format("2006-01-02T15:04:05Z")
+		s := p.EnrichedAt.UTC().Format(timeFormat)
 		resp.EnrichedAt = &s
 	}
 
@@ -260,6 +248,18 @@ func toPatternResponse(p *patternrepo.Pattern, graph *patternsvc.GraphContext) p
 	return resp
 }
 
+func toChunkSummaries(chunks []*chunkrepo.Chunk) []chunkSummary {
+	summaries := make([]chunkSummary, len(chunks))
+	for i, ch := range chunks {
+		summaries[i] = chunkSummary{
+			ChunkIndex:       ch.ChunkIndex,
+			SectionTitle:     ch.SectionTitle,
+			EnrichmentStatus: ch.EnrichmentStatus,
+		}
+	}
+	return summaries
+}
+
 func toPatternSummary(p *patternrepo.Pattern) patternSummaryResponse {
 	tags := p.Tags
 	if tags == nil {
@@ -271,8 +271,8 @@ func toPatternSummary(p *patternrepo.Pattern) patternSummaryResponse {
 		Description:      p.Description,
 		Tags:             tags,
 		EnrichmentStatus: p.EnrichmentStatus,
-		CreatedAt:        p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:        p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		CreatedAt:        p.CreatedAt.UTC().Format(timeFormat),
+		UpdatedAt:        p.UpdatedAt.UTC().Format(timeFormat),
 	}
 }
 
@@ -280,70 +280,99 @@ func toPatternSummary(p *patternrepo.Pattern) patternSummaryResponse {
 // returns a non-nil slice of FieldErrors when any constraint is violated.
 // When allowedLanguages or allowedDomains are non-empty, the supplied values
 // must appear in the respective list.
-func (h *Handler) validatePatternFields(name, content string, description *string, tags []string, entityType, language, domain string) []handlers.FieldError {
+func (h *Handler) validatePatternFields(req patternRequest) []handlers.FieldError {
 	var errs []handlers.FieldError
 
 	// name: must match ^[a-z][a-z0-9-]*$, length 1-128
-	nameLen := utf8.RuneCountInString(name)
+	nameLen := utf8.RuneCountInString(req.Name)
 	if nameLen == 0 {
 		errs = append(errs, handlers.FieldError{Field: "name", Code: "REQUIRED", Message: "name is required"})
 	} else if nameLen > 128 {
 		errs = append(errs, handlers.FieldError{Field: "name", Code: "MAX_LENGTH", Message: "name must be 128 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(name) {
+	} else if !kebabCaseRe.MatchString(req.Name) {
 		errs = append(errs, handlers.FieldError{Field: "name", Code: "INVALID_FORMAT", Message: "name must match ^[a-z][a-z0-9-]*$"})
 	}
 
 	// content: must not be empty; upper bound of 100KB guards against DoS
 	// (real pattern files top out around 18KB per design doc)
-	if len(content) == 0 {
+	if len(req.Content) == 0 {
 		errs = append(errs, handlers.FieldError{Field: "content", Code: "REQUIRED", Message: "content is required"})
-	} else if len(content) > 100_000 {
+	} else if len(req.Content) > 100_000 {
 		errs = append(errs, handlers.FieldError{Field: "content", Code: "TOO_LARGE", Message: "content must be 100000 bytes or fewer"})
 	}
 
 	// description: optional, max 500 chars
-	if description != nil && utf8.RuneCountInString(*description) > 500 {
+	if req.Description != nil && utf8.RuneCountInString(*req.Description) > 500 {
 		errs = append(errs, handlers.FieldError{Field: "description", Code: "MAX_LENGTH", Message: "description must be 500 characters or fewer"})
 	}
 
 	// tags: max 20 items
-	if len(tags) > 20 {
+	if len(req.Tags) > 20 {
 		errs = append(errs, handlers.FieldError{Field: "tags", Code: "MAX_ITEMS", Message: "tags must contain 20 items or fewer"})
 	}
 
 	// entity_type: required, max 100 chars, must match ^[a-z][a-z0-9-]*$
-	entityTypeLen := utf8.RuneCountInString(entityType)
+	entityTypeLen := utf8.RuneCountInString(req.EntityType)
 	if entityTypeLen == 0 {
 		errs = append(errs, handlers.FieldError{Field: "entity_type", Code: "REQUIRED", Message: "entity_type is required"})
 	} else if entityTypeLen > 100 {
 		errs = append(errs, handlers.FieldError{Field: "entity_type", Code: "MAX_LENGTH", Message: "entity_type must be 100 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(entityType) {
+	} else if !kebabCaseRe.MatchString(req.EntityType) {
 		errs = append(errs, handlers.FieldError{Field: "entity_type", Code: "INVALID_FORMAT", Message: "entity_type must match ^[a-z][a-z0-9-]*$"})
 	}
 
 	// language: required, must be kebab-case, max 64 chars, and must be one of the allowed values.
-	if language == "" {
+	if req.Language == "" {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "REQUIRED", Message: "language is required"})
-	} else if utf8.RuneCountInString(language) > 64 {
+	} else if utf8.RuneCountInString(req.Language) > 64 {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "MAX_LENGTH", Message: "language must be 64 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(language) {
+	} else if !kebabCaseRe.MatchString(req.Language) {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "INVALID_FORMAT", Message: "language must match ^[a-z][a-z0-9-]*$"})
-	} else if !slices.Contains(h.allowedLanguages, language) {
+	} else if !slices.Contains(h.allowedLanguages, req.Language) {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "INVALID_VALUE", Message: "language is not an allowed value"})
 	}
 
 	// domain: required, must be kebab-case, max 64 chars, and must be one of the allowed values.
-	if domain == "" {
+	if req.Domain == "" {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "REQUIRED", Message: "domain is required"})
-	} else if utf8.RuneCountInString(domain) > 64 {
+	} else if utf8.RuneCountInString(req.Domain) > 64 {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "MAX_LENGTH", Message: "domain must be 64 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(domain) {
+	} else if !kebabCaseRe.MatchString(req.Domain) {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "INVALID_FORMAT", Message: "domain must match ^[a-z][a-z0-9-]*$"})
-	} else if !slices.Contains(h.allowedDomains, domain) {
+	} else if !slices.Contains(h.allowedDomains, req.Domain) {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "INVALID_VALUE", Message: "domain is not an allowed value"})
 	}
 
 	return errs
+}
+
+// parseID reads the :id path parameter, responding 400 when it is not a UUID.
+func parseID(c *gin.Context) (uuid.UUID, bool) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
+			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
+		})
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+// bindPattern binds and validates a create or update body, responding 400
+// when it is malformed or a field is invalid.
+func (h *Handler) bindPattern(c *gin.Context) (patternsvc.Input, bool) {
+	var req patternRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handlers.RespondValidationError(c, "The request body contains invalid fields", nil)
+		return patternsvc.Input{}, false
+	}
+
+	if fieldErrs := h.validatePatternFields(req); len(fieldErrs) > 0 {
+		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
+		return patternsvc.Input{}, false
+	}
+
+	return patternsvc.Input(req), true
 }
 
 // --- Handlers ---
@@ -354,42 +383,19 @@ func (h *Handler) validatePatternFields(name, content string, description *strin
 // @Tags         Patterns
 // @Accept       json
 // @Produce      json
-// @Param        body  body      patternCreateRequest  true  "Pattern to create"
+// @Param        body  body      patternRequest  true  "Pattern to create"
 // @Success      202   {object}  patternResponse
 // @Failure      400   {object}  handlers.ProblemDetail
 // @Failure      409   {object}  handlers.ProblemDetail
 // @Failure      500   {object}  handlers.ProblemDetail
 // @Router       /patterns [post]
 func (h *Handler) Create(c *gin.Context) {
-	var req patternCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", nil)
+	input, ok := h.bindPattern(c)
+	if !ok {
 		return
 	}
 
-	if fieldErrs := h.validatePatternFields(req.Name, req.Content, req.Description, req.Tags, req.EntityType, req.Language, req.Domain); len(fieldErrs) > 0 {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
-		return
-	}
-
-	if req.Tags == nil {
-		req.Tags = []string{}
-	}
-	if req.RelatedPatterns == nil {
-		req.RelatedPatterns = []string{}
-	}
-
-	pattern, err := h.patternSvc.Create(c.Request.Context(), patternsvc.CreateInput{
-		Name:            req.Name,
-		Description:     req.Description,
-		Content:         req.Content,
-		Tags:            req.Tags,
-		EntityType:      req.EntityType,
-		Language:        req.Language,
-		Domain:          req.Domain,
-		Version:         req.Version,
-		RelatedPatterns: req.RelatedPatterns,
-	})
+	pattern, err := h.patternSvc.Create(c.Request.Context(), input)
 	if err != nil {
 		handlers.RespondError(c, err)
 		return
@@ -445,7 +451,7 @@ func (h *Handler) List(c *gin.Context) {
 		EntityType:  c.Query("entity_type"),
 	}
 
-	patterns, _, err := h.patternSvc.List(c.Request.Context(), filter, patternsvc.ListOptions{
+	patterns, err := h.patternSvc.List(c.Request.Context(), filter, patternsvc.ListOptions{
 		Offset: offset,
 		Limit:  limit + 1,
 	})
@@ -498,11 +504,8 @@ func (h *Handler) List(c *gin.Context) {
 // @Failure      500  {object}  handlers.ProblemDetail
 // @Router       /patterns/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
@@ -522,15 +525,7 @@ func (h *Handler) Get(c *gin.Context) {
 		// Non-fatal: log and return the pattern without chunks.
 		c.Header("X-Warning", "chunks unavailable")
 	} else {
-		summaries := make([]chunkSummary, len(chunks))
-		for i, ch := range chunks {
-			summaries[i] = chunkSummary{
-				ChunkIndex:       ch.ChunkIndex,
-				SectionTitle:     ch.SectionTitle,
-				EnrichmentStatus: ch.EnrichmentStatus,
-			}
-		}
-		resp.Chunks = summaries
+		resp.Chunks = toChunkSummaries(chunks)
 	}
 
 	c.JSON(http.StatusOK, resp)
@@ -541,8 +536,8 @@ func (h *Handler) Get(c *gin.Context) {
 // @Summary      Update pattern
 // @Tags         Patterns
 // @Accept       json
-// @Param        id    path      string                true  "Pattern UUID"
-// @Param        body  body      patternUpdateRequest  true  "Pattern fields to update"
+// @Param        id    path      string          true  "Pattern UUID"
+// @Param        body  body      patternRequest  true  "Pattern fields to update"
 // @Success      204   "No Content"
 // @Failure      400   {object}  handlers.ProblemDetail
 // @Failure      404   {object}  handlers.ProblemDetail
@@ -550,43 +545,17 @@ func (h *Handler) Get(c *gin.Context) {
 // @Failure      500   {object}  handlers.ProblemDetail
 // @Router       /patterns/{id} [put]
 func (h *Handler) Update(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
-	var req patternUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", nil)
+	input, ok := h.bindPattern(c)
+	if !ok {
 		return
 	}
 
-	if fieldErrs := h.validatePatternFields(req.Name, req.Content, req.Description, req.Tags, req.EntityType, req.Language, req.Domain); len(fieldErrs) > 0 {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
-		return
-	}
-
-	if req.Tags == nil {
-		req.Tags = []string{}
-	}
-	if req.RelatedPatterns == nil {
-		req.RelatedPatterns = []string{}
-	}
-
-	if _, err := h.patternSvc.Update(c.Request.Context(), id, patternsvc.UpdateInput{
-		Name:            req.Name,
-		Description:     req.Description,
-		Content:         req.Content,
-		Tags:            req.Tags,
-		EntityType:      req.EntityType,
-		Language:        req.Language,
-		Domain:          req.Domain,
-		Version:         req.Version,
-		RelatedPatterns: req.RelatedPatterns,
-	}); err != nil {
+	if _, err := h.patternSvc.Update(c.Request.Context(), id, input); err != nil {
 		handlers.RespondError(c, err)
 		return
 	}
@@ -605,11 +574,8 @@ func (h *Handler) Update(c *gin.Context) {
 // @Failure      500  {object}  handlers.ProblemDetail
 // @Router       /patterns/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
@@ -633,11 +599,8 @@ func (h *Handler) Delete(c *gin.Context) {
 // @Failure      500  {object}  handlers.ProblemDetail
 // @Router       /patterns/{id}/chunks [get]
 func (h *Handler) GetChunks(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		handlers.RespondValidationError(c, "Invalid pattern ID format", []handlers.FieldError{
-			{Field: "id", Code: "INVALID_FORMAT", Message: "id must be a valid UUID"},
-		})
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
@@ -654,15 +617,7 @@ func (h *Handler) GetChunks(c *gin.Context) {
 		handlers.RespondError(c, err)
 		return
 	}
-	summaries := make([]chunkSummary, len(chunks))
-	for i, ch := range chunks {
-		summaries[i] = chunkSummary{
-			ChunkIndex:       ch.ChunkIndex,
-			SectionTitle:     ch.SectionTitle,
-			EnrichmentStatus: ch.EnrichmentStatus,
-		}
-	}
-	c.JSON(http.StatusOK, chunkListResponse{Chunks: summaries, Count: len(summaries)})
+	c.JSON(http.StatusOK, chunkListResponse{Chunks: toChunkSummaries(chunks), Count: len(chunks)})
 }
 
 // Search handles GET /v1/api/patterns/search.
@@ -696,16 +651,12 @@ func (h *Handler) Search(c *gin.Context) {
 		return
 	}
 
-	limit := 10
-	if rawLimit := c.Query("limit"); rawLimit != "" {
-		parsed, err := strconv.Atoi(rawLimit)
-		if err != nil || parsed < 1 || parsed > 50 {
-			handlers.RespondValidationError(c, "Invalid query parameter", []handlers.FieldError{
-				{Field: "limit", Code: "INVALID_VALUE", Message: "limit must be an integer between 1 and 50"},
-			})
-			return
-		}
-		limit = parsed
+	limit, ok := handlers.ParseIntQueryStrict(c, "limit", 10, 1, 50)
+	if !ok {
+		handlers.RespondValidationError(c, "Invalid query parameter", []handlers.FieldError{
+			{Field: "limit", Code: "INVALID_VALUE", Message: "limit must be an integer between 1 and 50"},
+		})
+		return
 	}
 
 	threshold := 0.7

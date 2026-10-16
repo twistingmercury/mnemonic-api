@@ -35,11 +35,6 @@ func testEmbedding() []float32 {
 	return emb
 }
 
-// ptr is a helper to create a pointer to any value.
-func ptr[T any](v T) *T {
-	return &v
-}
-
 func TestRepository_ListSummariesByPatternID(t *testing.T) {
 	t.Parallel()
 
@@ -384,38 +379,6 @@ func TestRepository_CreateBatch(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("inserts all chunks in one statement and maps DB values by id", func(t *testing.T) {
-		t.Parallel()
-		mock, err := pgxmock.NewPool()
-		require.NoError(t, err)
-		defer mock.Close()
-
-		patternID := uuid.New()
-		id1, id2 := uuid.New(), uuid.New()
-		chunks := []*chunk.Chunk{
-			{ID: id1, PatternID: patternID, SectionTitle: "Intro", ChunkIndex: 0, Content: "intro content"},
-			{ID: id2, PatternID: patternID, SectionTitle: "Details", ChunkIndex: 1, Content: "details content"},
-		}
-		first := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		second := first.Add(time.Second)
-
-		// One query for every chunk. RETURNING rows come back in reverse to
-		// prove the mapping is by id, not by position.
-		mock.ExpectQuery(`INSERT INTO pattern_chunks .* unnest`).
-			WithArgs(patternID, []uuid.UUID{id1, id2}, []string{"Intro", "Details"}, []int32{0, 1}, []string{"intro content", "details content"}).
-			WillReturnRows(pgxmock.NewRows([]string{"id", "enrichment_status", "created_at", "updated_at"}).
-				AddRow(id2, "pending", second, second).
-				AddRow(id1, "pending", first, first))
-
-		require.NoError(t, chunk.NewRepository(mock).CreateBatch(context.Background(), chunks))
-		assert.NoError(t, mock.ExpectationsWereMet())
-
-		assert.Equal(t, first, chunks[0].CreatedAt)
-		assert.Equal(t, second, chunks[1].CreatedAt)
-		assert.Equal(t, "pending", chunks[0].EnrichmentStatus)
-		assert.Equal(t, "pending", chunks[1].EnrichmentStatus)
-	})
-
 	t.Run("generates missing ids", func(t *testing.T) {
 		t.Parallel()
 		mock, err := pgxmock.NewPool()
@@ -423,9 +386,9 @@ func TestRepository_CreateBatch(t *testing.T) {
 		defer mock.Close()
 
 		chunks := []*chunk.Chunk{{PatternID: uuid.New(), SectionTitle: "Intro", Content: "x"}}
-		mock.ExpectQuery(`INSERT INTO pattern_chunks`).
+		mock.ExpectExec(`INSERT INTO pattern_chunks .* unnest`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
-			WillReturnRows(pgxmock.NewRows([]string{"id", "enrichment_status", "created_at", "updated_at"}))
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 		require.NoError(t, chunk.NewRepository(mock).CreateBatch(context.Background(), chunks))
 		assert.NotEqual(t, uuid.Nil, chunks[0].ID)
@@ -437,7 +400,7 @@ func TestRepository_CreateBatch(t *testing.T) {
 		require.NoError(t, err)
 		defer mock.Close()
 
-		mock.ExpectQuery(`INSERT INTO pattern_chunks`).
+		mock.ExpectExec(`INSERT INTO pattern_chunks`).
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnError(errors.New("connection reset"))
 

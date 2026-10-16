@@ -16,6 +16,8 @@ import (
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
 )
 
+func init() { gin.SetMode(gin.TestMode) }
+
 func TestPrivateDiagnosticBoundsAndRedaction(t *testing.T) {
 	for _, tc := range []struct {
 		name, message string
