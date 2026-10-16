@@ -13,16 +13,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/rs/zerolog"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/google/uuid"
+	_ "github.com/twistingmercury/mnemonic-api/docs/swagger"
 	"github.com/twistingmercury/mnemonic-api/internal/config"
 	"github.com/twistingmercury/mnemonic-api/internal/database/graphdb"
 	"github.com/twistingmercury/mnemonic-api/internal/database/vectordb"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers"
 	"github.com/twistingmercury/mnemonic-api/internal/handlers/operations"
+	patternhandler "github.com/twistingmercury/mnemonic-api/internal/handlers/patterns"
 	"github.com/twistingmercury/mnemonic-api/internal/health"
 	"github.com/twistingmercury/mnemonic-api/internal/metrics"
 	"github.com/twistingmercury/mnemonic-api/internal/middleware"
@@ -73,7 +76,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	defer closeDatabases(pgPool, neo4jDriver, logger)
 
 	// Wire all dependencies.
-	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger)
+	patternHandler, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("failed to wire dependencies: %w", err)
 	}
@@ -91,20 +94,14 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 		OpenAI:      cfg.OpenAI,
 		Queue:       pub,
 	}))
-	RegisterAPIRoutes(router, svc, cfg.Vocabulary)
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	patternHandler.RegisterRoutes(router.Group("/v1/api"))
 
 	// Build the Admin API HTTP server.
 	adminServer := CreateHTTPServer(router, cfg)
 
-	// Run the Admin API.
-	g, gCtx := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		return runHTTPServer(gCtx, adminServer, cfg, logger, "admin_api")
-	})
-
-	// Wait for shutdown signal or component failure.
-	if err := g.Wait(); err != nil {
+	// Run the Admin API until a shutdown signal or a listener failure.
+	if err := runHTTPServer(ctx, adminServer, cfg, logger); err != nil {
 		return err
 	}
 
@@ -153,18 +150,18 @@ func closeDatabases(pgPool *pgxpool.Pool, neo4jDriver neo4j.DriverWithContext, l
 }
 
 // wireDependencies creates all repositories, services, and the RabbitMQ
-// publisher. Returns the route Services and Publisher.
+// publisher. Returns the REST API handler and the publisher.
 func wireDependencies(
 	pgPool *pgxpool.Pool,
 	neo4jDriver neo4j.DriverWithContext,
 	cfg *config.MnemonicConfig,
 	logger zerolog.Logger,
-) (Services, *rabbitmq.Publisher, error) {
+) (*patternhandler.Handler, *rabbitmq.Publisher, error) {
 	// Telemetry installs its meter provider globally, so the instruments are
 	// created from otel.Meter.
 	registry, err := metrics.NewRegistry(otel.Meter("mnemonic"))
 	if err != nil {
-		return Services{}, nil, fmt.Errorf("create metrics registry: %w", err)
+		return nil, nil, fmt.Errorf("create metrics registry: %w", err)
 	}
 
 	// Repositories.
@@ -179,36 +176,30 @@ func wireDependencies(
 	// Publisher.
 	pub, err := rabbitmq.NewPublisher(cfg.Queue.RabbitMQ, otel.Meter("mnemonic/queue"))
 	if err != nil {
-		return Services{}, nil, fmt.Errorf("wire publisher: %w", err)
+		return nil, nil, fmt.Errorf("wire publisher: %w", err)
 	}
 
 	// Domain services.
 	searchSvc := searchsvc.New(embeddingSvc, chunkRepo, registry.Patterns, logger)
 	patternSvc := patternsvc.New(patternRepo, enrichmentJobRepo, graphRepo, pgPool, chunkRepo, pub, logger)
 
-	// REST API services.
-	svc := Services{
-		Pattern: patternSvc,
-		Search:  searchSvc,
-	}
-
-	return svc, pub, nil
+	return patternhandler.New(patternSvc, searchSvc, cfg.Vocabulary), pub, nil
 }
 
 // runHTTPServer starts the admin API HTTP server and gracefully shuts it down
 // when the context is cancelled.
-func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicConfig, logger zerolog.Logger, name string) error {
+func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicConfig, logger zerolog.Logger) error {
 	errCh := make(chan error, 1)
 
 	go func() {
 		logger.Info().
 			Str("addr", srv.Addr).
-			Str("component", name).
+			Str("component", "admin_api").
 			Msg("HTTP server listening")
 
 		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("%s server error: %w", name, err)
+			errCh <- fmt.Errorf("admin_api server error: %w", err)
 		}
 		close(errCh)
 	}()
@@ -222,9 +213,9 @@ func runHTTPServer(ctx context.Context, srv *http.Server, cfg *config.MnemonicCo
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
 
-	logger.Info().Str("component", name).Msg("shutting down HTTP server")
+	logger.Info().Str("component", "admin_api").Msg("shutting down HTTP server")
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("%s shutdown error: %w", name, err)
+		return fmt.Errorf("admin_api shutdown error: %w", err)
 	}
 	return nil
 }

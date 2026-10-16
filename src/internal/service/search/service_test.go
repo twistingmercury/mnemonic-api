@@ -268,23 +268,3 @@ func TestSearchPatterns_FindSimilarError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "find similar chunks")
 }
-
-func TestSearchPatterns_ChunkRepoNotConfigured(t *testing.T) {
-	t.Parallel()
-
-	embSvc := new(mockEmbeddingService)
-	// Pass nil chunkRepo explicitly.
-	svc := search.New(embSvc, nil, nil, zerolog.Nop())
-
-	embSvc.On("Embed", mock.Anything, "some query").Return(testEmbedding, nil)
-
-	result, err := svc.SearchPatterns(context.Background(), search.SearchOptions{
-		Query:     "some query",
-		Limit:     10,
-		Threshold: 0.7,
-	})
-
-	assert.Nil(t, result)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, service.ErrServiceUnavailable))
-}

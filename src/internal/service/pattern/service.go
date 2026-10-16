@@ -280,12 +280,9 @@ func (s *patternService) Get(ctx context.Context, id uuid.UUID) (*patternRepo.Pa
 // GetWithGraph retrieves a pattern and its graph context. If the pattern is not
 // enriched or Neo4j is unavailable, the graph context is nil.
 func (s *patternService) GetWithGraph(ctx context.Context, id uuid.UUID) (*patternRepo.Pattern, *GraphContext, error) {
-	pattern, err := s.patternRepo.Get(ctx, id)
+	pattern, err := s.Get(ctx, id)
 	if err != nil {
-		if errors.Is(err, patternRepo.ErrNotFound) {
-			return nil, nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, id)
-		}
-		return nil, nil, fmt.Errorf("get pattern with graph: %w", err)
+		return nil, nil, err
 	}
 
 	if pattern.EnrichmentStatus != "enriched" {
@@ -310,13 +307,9 @@ func (s *patternService) GetWithGraph(ctx context.Context, id uuid.UUID) (*patte
 // cascades their jobs away, so a partial update would strand the pattern with
 // no route back to being enriched.
 func (s *patternService) Update(ctx context.Context, patternID uuid.UUID, input UpdateInput) (*patternRepo.Pattern, error) {
-	// Verify pattern exists.
-	existing, err := s.patternRepo.Get(ctx, patternID)
+	existing, err := s.Get(ctx, patternID)
 	if err != nil {
-		if errors.Is(err, patternRepo.ErrNotFound) {
-			return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
-		}
-		return nil, fmt.Errorf("update pattern: %w", err)
+		return nil, err
 	}
 
 	// Build updated pattern preserving the ID.
@@ -395,9 +388,12 @@ func (s *patternService) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 
 	// Best-effort Neo4j cleanup; DeletePattern also drops concepts left orphaned.
-	s.syncNeo4j("pattern:delete:"+id.String(), func() error {
-		return s.graphRepo.DeletePattern(ctx, id)
-	})
+	if err := s.graphRepo.DeletePattern(ctx, id); err != nil {
+		s.logger.Warn().
+			Err(err).
+			Str("entity", "pattern:delete:"+id.String()).
+			Msg("neo4j sync failed")
+	}
 
 	return nil
 }
@@ -454,17 +450,6 @@ func (s *patternService) fetchGraphContext(ctx context.Context, patternID uuid.U
 		RelatedPatterns: relatedResults,
 		Concepts:        conceptResults,
 	}, nil
-}
-
-// syncNeo4j runs fn as a best-effort Neo4j operation.
-// Errors are logged but not returned to the caller.
-func (s *patternService) syncNeo4j(entityDesc string, fn func() error) {
-	if err := fn(); err != nil {
-		s.logger.Warn().
-			Err(err).
-			Str("entity", entityDesc).
-			Msg("neo4j sync failed")
-	}
 }
 
 // insertChunksAndJobs inserts the chunks for content and one pending job per

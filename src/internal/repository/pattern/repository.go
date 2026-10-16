@@ -122,16 +122,11 @@ func (r *pgxRepository) Get(ctx context.Context, id uuid.UUID) (*Pattern, error)
 		WHERE id = $1
 	`
 
-	return r.scanPattern(ctx, query, id)
-}
-
-// scanPattern is a helper that executes a query and scans the result into a Pattern.
-func (r *pgxRepository) scanPattern(ctx context.Context, query string, arg any) (*Pattern, error) {
 	var p Pattern
 	var tagsJSON []byte
 	var relatedPatternsJSON []byte
 
-	err := r.db.QueryRow(ctx, query, arg).Scan(
+	err := r.db.QueryRow(ctx, query, id).Scan(
 		&p.ID,
 		&p.Name,
 		&p.Description,
@@ -261,50 +256,39 @@ func (r *pgxRepository) Delete(ctx context.Context, id uuid.UUID) error {
 // selected: list responses only carry summary fields, and content is the
 // largest column by far.
 func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, error) {
-	// Build query dynamically based on filter
+	// Build query dynamically based on filter. Each condition takes the next
+	// placeholder, numbered from the arguments collected so far.
 	var whereConditions []string
 	var args []any
-	argNum := 1
+	where := func(format string, arg any) {
+		args = append(args, arg)
+		whereConditions = append(whereConditions, fmt.Sprintf(format, len(args)))
+	}
 
 	if filter.EnrichmentStatus != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("enrichment_status = $%d", argNum))
-		args = append(args, filter.EnrichmentStatus)
-		argNum++
+		where("enrichment_status = $%d", filter.EnrichmentStatus)
 	}
 
 	if len(filter.Tags) > 0 {
 		// Use ?& operator to check if tags contain ALL of the specified tags (AND logic)
-		whereConditions = append(whereConditions, fmt.Sprintf("tags ?& $%d", argNum))
-		args = append(args, filter.Tags)
-		argNum++
+		where("tags ?& $%d", filter.Tags)
 	}
 
 	if filter.SearchQuery != "" {
 		// Full-text search on name and description
-		whereConditions = append(whereConditions, fmt.Sprintf(
-			"to_tsvector('english', name || ' ' || coalesce(description, '')) @@ plainto_tsquery('english', $%d)",
-			argNum,
-		))
-		args = append(args, filter.SearchQuery)
-		argNum++
+		where("to_tsvector('english', name || ' ' || coalesce(description, '')) @@ plainto_tsquery('english', $%d)", filter.SearchQuery)
 	}
 
 	if filter.Language != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("language = $%d", argNum))
-		args = append(args, filter.Language)
-		argNum++
+		where("language = $%d", filter.Language)
 	}
 
 	if filter.Domain != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("domain = $%d", argNum))
-		args = append(args, filter.Domain)
-		argNum++
+		where("domain = $%d", filter.Domain)
 	}
 
 	if filter.EntityType != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("entity_type = $%d", argNum))
-		args = append(args, filter.EntityType)
-		argNum++
+		where("entity_type = $%d", filter.EntityType)
 	}
 
 	whereClause := ""
@@ -324,16 +308,12 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 
 	// Add pagination
 	if opts.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argNum)
 		args = append(args, opts.Limit)
-		argNum++
-		if opts.Offset > 0 {
-			query += fmt.Sprintf(" OFFSET $%d", argNum)
-			args = append(args, opts.Offset)
-		}
-	} else if opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argNum)
+		query += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+	if opts.Offset > 0 {
 		args = append(args, opts.Offset)
+		query += fmt.Sprintf(" OFFSET $%d", len(args))
 	}
 
 	rows, err := r.db.Query(ctx, query, args...)

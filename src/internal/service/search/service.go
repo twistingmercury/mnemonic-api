@@ -91,12 +91,6 @@ func (s *searchService) SearchPatterns(ctx context.Context, opts SearchOptions) 
 	}
 
 	// 2. Perform chunk-based similarity search.
-
-	// Guard: chunkRepo must be configured before attempting vector search.
-	if s.chunkRepo == nil {
-		return nil, fmt.Errorf("%w: chunk repository not configured", service.ErrServiceUnavailable)
-	}
-
 	simOpts := chunkrepo.SimilarityOptions{
 		MinSimilarity: opts.Threshold,
 		MaxResults:    opts.Limit,
