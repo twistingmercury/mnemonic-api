@@ -21,7 +21,7 @@ func NewPostgresPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.P
 	}
 
 	poolCfg.MaxConns = cfg.MaxOpenConns
-	poolCfg.MinConns = cfg.MaxIdleConns
+	poolCfg.MinConns = cfg.MinConns
 	poolCfg.MaxConnLifetime = cfg.ConnMaxLifetime
 	poolCfg.ConnConfig.Tracer = otelpgx.NewTracer()
 

@@ -44,7 +44,7 @@ func TestDefaultValues(t *testing.T) {
 	assert.Equal(t, config.DefaultPostgresUsername, cfg.Database.Postgres.Username)
 	assert.Equal(t, config.DefaultPostgresSSLMode, cfg.Database.Postgres.SSLMode)
 	assert.Equal(t, int32(config.DefaultPostgresMaxOpenConns), cfg.Database.Postgres.MaxOpenConns)
-	assert.Equal(t, int32(config.DefaultPostgresMaxIdleConns), cfg.Database.Postgres.MaxIdleConns)
+	assert.Equal(t, int32(config.DefaultPostgresMinConns), cfg.Database.Postgres.MinConns)
 	assert.Equal(t, config.DefaultPostgresConnMaxLifetime, cfg.Database.Postgres.ConnMaxLifetime)
 
 	// Neo4j defaults
@@ -381,19 +381,19 @@ func TestValidation_DatabaseConfig(t *testing.T) {
 			expectError: "database.postgres.max_open_conns",
 		},
 		{
-			name: "negative postgres max_idle_conns",
+			name: "negative postgres min_conns",
 			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Database.Postgres.MaxIdleConns = -1
+				cfg.Database.Postgres.MinConns = -1
 			},
-			expectError: "database.postgres.max_idle_conns",
+			expectError: "database.postgres.min_conns",
 		},
 		{
-			name: "max_idle_conns greater than max_open_conns",
+			name: "min_conns greater than max_open_conns",
 			modify: func(cfg *config.MnemonicConfig) {
 				cfg.Database.Postgres.MaxOpenConns = 10
-				cfg.Database.Postgres.MaxIdleConns = 20
+				cfg.Database.Postgres.MinConns = 20
 			},
-			expectError: "database.postgres.max_idle_conns",
+			expectError: "database.postgres.min_conns",
 		},
 		{
 			name: "negative postgres conn_max_lifetime",
@@ -1313,7 +1313,7 @@ func validConfig() *config.MnemonicConfig {
 				Password:        "",
 				SSLMode:         "prefer",
 				MaxOpenConns:    25,
-				MaxIdleConns:    5,
+				MinConns:        5,
 				ConnMaxLifetime: 5 * time.Minute,
 			},
 			Neo4j: config.Neo4jConfig{
