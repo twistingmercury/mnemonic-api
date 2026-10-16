@@ -322,9 +322,9 @@ func newTestServiceWithPublisher(
 	return patternsvc.New(pr, er, gr, tb, cr, pub, logger)
 }
 
-func testCreateInput() patternsvc.CreateInput {
+func testCreateInput() patternsvc.Input {
 	desc := "A test pattern"
-	return patternsvc.CreateInput{
+	return patternsvc.Input{
 		Name:        "go-error-handling",
 		Description: &desc,
 		Content:     "Always handle errors explicitly.",
@@ -332,9 +332,9 @@ func testCreateInput() patternsvc.CreateInput {
 	}
 }
 
-func testUpdateInput() patternsvc.UpdateInput {
+func testUpdateInput() patternsvc.Input {
 	desc := "Updated description"
-	return patternsvc.UpdateInput{
+	return patternsvc.Input{
 		Name:        "go-error-handling-v2",
 		Description: &desc,
 		Content:     "Updated content.",
@@ -695,7 +695,7 @@ func TestUpdate(t *testing.T) {
 		tx := new(mockPgxTx)
 		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
 			Tags:    []string{"golang", "errors"},
@@ -754,7 +754,7 @@ func TestUpdate(t *testing.T) {
 		tx := new(mockPgxTx)
 		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "## Section\nContent.",
 		}
@@ -792,7 +792,7 @@ func TestUpdate(t *testing.T) {
 		tx := new(mockPgxTx)
 		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
 		}
@@ -851,7 +851,7 @@ func TestUpdate(t *testing.T) {
 		tx := new(mockPgxTx)
 		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "[//]: pattern\n## Section One\nNew content.",
 		}
@@ -889,7 +889,7 @@ func TestUpdate(t *testing.T) {
 		tx := new(mockPgxTx)
 		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "[//]: pattern\n## Section One\nNew content.",
 		}
@@ -926,7 +926,7 @@ func TestUpdate(t *testing.T) {
 		pub := &mockPublisher{}
 		svc := newTestServiceWithPublisher(pr, er, gr, tb, cr, pub)
 
-		input := patternsvc.UpdateInput{
+		input := patternsvc.Input{
 			Name:    "go-error-handling-v2",
 			Content: "[//]: pattern\n## Section One\nNew content.\n\n[//]: pattern\n## Section Two\nMore new content.",
 		}
@@ -980,7 +980,7 @@ func TestCreate_JobFailureRollsBackEverything(t *testing.T) {
 	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
 	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
 
-	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
+	result, err := svc.Create(context.Background(), patternsvc.Input{
 		Name:    "go-error-handling",
 		Content: decoratedContent,
 	})
@@ -1016,7 +1016,7 @@ func TestUpdate_JobFailureRollsBackEverything(t *testing.T) {
 	cr.tx().On("CreateBatch", mock.Anything, mock.Anything).Return(nil)
 	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(nil, errors.New("jobs table unavailable"))
 
-	result, err := svc.Update(context.Background(), testPatternID, patternsvc.UpdateInput{
+	result, err := svc.Update(context.Background(), testPatternID, patternsvc.Input{
 		Name:    "go-error-handling-v2",
 		Content: decoratedContent,
 	})
@@ -1059,7 +1059,7 @@ func TestCreate_CommitFailurePublishesNothing(t *testing.T) {
 	}).Return(nil)
 	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return([]uuid.UUID{uuid.New(), uuid.New()}, nil)
 
-	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
+	result, err := svc.Create(context.Background(), patternsvc.Input{
 		Name:    "go-error-handling",
 		Content: decoratedContent,
 	})
@@ -1181,7 +1181,7 @@ func TestCreate_ChunksContent(t *testing.T) {
 	jobForChunk := map[uuid.UUID]uuid.UUID{}
 
 	desc := "A chunked pattern"
-	input := patternsvc.CreateInput{
+	input := patternsvc.Input{
 		Name:        "chunked-pattern",
 		Description: &desc,
 		Content:     decoratedContent,
@@ -1374,7 +1374,7 @@ func TestPublishJobError(t *testing.T) {
 	}).Return(nil)
 	er.tx().On("CreatePendingForChunks", mock.Anything, mock.Anything).Return(jobIDs, nil).Once()
 
-	result, err := svc.Create(context.Background(), patternsvc.CreateInput{
+	result, err := svc.Create(context.Background(), patternsvc.Input{
 		Name:    "chunked-pattern",
 		Content: decoratedContent,
 	})

@@ -27,7 +27,7 @@ type Service interface {
 	// per chunk, atomically. Enrichment runs out of process afterwards, so a
 	// successful Create does not mean the pattern is searchable yet.
 	// Returns service.ErrConflict if the pattern name already exists.
-	Create(ctx context.Context, input CreateInput) (*patternRepo.Pattern, error)
+	Create(ctx context.Context, input Input) (*patternRepo.Pattern, error)
 
 	// Get retrieves a pattern by ID. Returns service.ErrNotFound if not found.
 	Get(ctx context.Context, id uuid.UUID) (*patternRepo.Pattern, error)
@@ -38,7 +38,7 @@ type Service interface {
 	GetWithGraph(ctx context.Context, id uuid.UUID) (*patternRepo.Pattern, *GraphContext, error)
 
 	// Update modifies an existing pattern, creates a new enrichment job
-	Update(ctx context.Context, id uuid.UUID, input UpdateInput) (*patternRepo.Pattern, error)
+	Update(ctx context.Context, id uuid.UUID, input Input) (*patternRepo.Pattern, error)
 
 	// Delete removes a pattern from Postgres (CASCADE handles associations and
 	// jobs) and best-effort cleans up Neo4j.
@@ -53,21 +53,9 @@ type Service interface {
 	ListChunks(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error)
 }
 
-// CreateInput contains fields for creating a pattern.
-type CreateInput struct {
-	Name            string
-	Description     *string
-	Content         string
-	Tags            []string
-	EntityType      string
-	Language        string
-	Domain          string
-	Version         *string
-	RelatedPatterns []string
-}
-
-// UpdateInput contains fields for updating a pattern.
-type UpdateInput struct {
+// Input contains the client-supplied fields for creating or updating a
+// pattern.
+type Input struct {
 	Name            string
 	Description     *string
 	Content         string
@@ -220,7 +208,7 @@ func (s *patternService) publishJob(ctx context.Context, jobID, patternID uuid.U
 // Create writes the pattern, its chunks and their enrichment jobs in one
 // transaction, then publishes the jobs. Publication is best-effort: a failure
 // there leaves the job rows pending for recovery rather than losing the work.
-func (s *patternService) Create(ctx context.Context, input CreateInput) (*patternRepo.Pattern, error) {
+func (s *patternService) Create(ctx context.Context, input Input) (*patternRepo.Pattern, error) {
 	pattern := patternRepo.Pattern{
 		Name:            input.Name,
 		Description:     input.Description,
@@ -306,7 +294,7 @@ func (s *patternService) GetWithGraph(ctx context.Context, id uuid.UUID) (*patte
 // one transaction, then publishes the new jobs. Deleting the old chunks
 // cascades their jobs away, so a partial update would strand the pattern with
 // no route back to being enriched.
-func (s *patternService) Update(ctx context.Context, patternID uuid.UUID, input UpdateInput) (*patternRepo.Pattern, error) {
+func (s *patternService) Update(ctx context.Context, patternID uuid.UUID, input Input) (*patternRepo.Pattern, error) {
 	existing, err := s.Get(ctx, patternID)
 	if err != nil {
 		return nil, err

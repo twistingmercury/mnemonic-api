@@ -34,7 +34,7 @@ type mockPatternService struct {
 	mock.Mock
 }
 
-func (m *mockPatternService) Create(ctx context.Context, input patternsvc.CreateInput) (*patternrepo.Pattern, error) {
+func (m *mockPatternService) Create(ctx context.Context, input patternsvc.Input) (*patternrepo.Pattern, error) {
 	args := m.Called(ctx, input)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -63,7 +63,7 @@ func (m *mockPatternService) GetWithGraph(ctx context.Context, id uuid.UUID) (*p
 	return p, g, args.Error(2)
 }
 
-func (m *mockPatternService) Update(ctx context.Context, id uuid.UUID, input patternsvc.UpdateInput) (*patternrepo.Pattern, error) {
+func (m *mockPatternService) Update(ctx context.Context, id uuid.UUID, input patternsvc.Input) (*patternrepo.Pattern, error) {
 	args := m.Called(ctx, id, input)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -149,7 +149,7 @@ func TestPatternCreate_Success(t *testing.T) {
 	router := newTestRouter(psvc, ssvc)
 
 	pattern := makePattern("go-error-handling")
-	psvc.On("Create", mock.Anything, mock.AnythingOfType("pattern.CreateInput")).Return(pattern, nil)
+	psvc.On("Create", mock.Anything, mock.AnythingOfType("pattern.Input")).Return(pattern, nil)
 
 	body := `{
 		"name": "go-error-handling",

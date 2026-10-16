@@ -102,8 +102,18 @@ definitions:
           $ref: '#/definitions/patterns.relatedPatternResponse'
         type: array
     type: object
-  patterns.patternCreateRequest:
-    description: Request body for creating a new pattern
+  patterns.patternListResponse:
+    description: Paginated list of pattern summaries
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/patterns.patternSummaryResponse'
+        type: array
+      pagination:
+        $ref: '#/definitions/handlers.Pagination'
+    type: object
+  patterns.patternRequest:
+    description: Request body for creating or updating a pattern
     properties:
       content:
         type: string
@@ -127,16 +137,6 @@ definitions:
         type: array
       version:
         type: string
-    type: object
-  patterns.patternListResponse:
-    description: Paginated list of pattern summaries
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/patterns.patternSummaryResponse'
-        type: array
-      pagination:
-        $ref: '#/definitions/handlers.Pagination'
     type: object
   patterns.patternResponse:
     description: Full pattern resource returned by create, get, and update operations
@@ -200,32 +200,6 @@ definitions:
           type: string
         type: array
       updated_at:
-        type: string
-    type: object
-  patterns.patternUpdateRequest:
-    description: Request body for updating an existing pattern
-    properties:
-      content:
-        type: string
-      description:
-        type: string
-      domain:
-        type: string
-      entity_type:
-        type: string
-      language:
-        type: string
-      name:
-        type: string
-      related_patterns:
-        items:
-          type: string
-        type: array
-      tags:
-        items:
-          type: string
-        type: array
-      version:
         type: string
     type: object
   patterns.relatedPatternResponse:
@@ -351,7 +325,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/patterns.patternCreateRequest'
+          $ref: '#/definitions/patterns.patternRequest'
       produces:
       - application/json
       responses:
@@ -445,7 +419,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/patterns.patternUpdateRequest'
+          $ref: '#/definitions/patterns.patternRequest'
       responses:
         "204":
           description: No Content

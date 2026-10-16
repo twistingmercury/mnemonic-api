@@ -65,23 +65,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // --- Request/Response Types ---
 
-// patternCreateRequest maps the OpenAPI PatternCreate schema.
-// @Description Request body for creating a new pattern
-type patternCreateRequest struct {
-	Name            string   `json:"name"`
-	Description     *string  `json:"description"`
-	Content         string   `json:"content"`
-	Tags            []string `json:"tags"`
-	EntityType      string   `json:"entity_type"`
-	Language        string   `json:"language"`
-	Domain          string   `json:"domain"`
-	Version         *string  `json:"version"`
-	RelatedPatterns []string `json:"related_patterns"`
-}
-
-// patternUpdateRequest maps the OpenAPI PatternUpdate schema.
-// @Description Request body for updating an existing pattern
-type patternUpdateRequest struct {
+// patternRequest maps the OpenAPI PatternCreate and PatternUpdate schemas,
+// which have the same fields.
+// @Description Request body for creating or updating a pattern
+type patternRequest struct {
 	Name            string   `json:"name"`
 	Description     *string  `json:"description"`
 	Content         string   `json:"content"`
@@ -293,66 +280,66 @@ func toPatternSummary(p *patternrepo.Pattern) patternSummaryResponse {
 // returns a non-nil slice of FieldErrors when any constraint is violated.
 // When allowedLanguages or allowedDomains are non-empty, the supplied values
 // must appear in the respective list.
-func (h *Handler) validatePatternFields(name, content string, description *string, tags []string, entityType, language, domain string) []handlers.FieldError {
+func (h *Handler) validatePatternFields(req patternRequest) []handlers.FieldError {
 	var errs []handlers.FieldError
 
 	// name: must match ^[a-z][a-z0-9-]*$, length 1-128
-	nameLen := utf8.RuneCountInString(name)
+	nameLen := utf8.RuneCountInString(req.Name)
 	if nameLen == 0 {
 		errs = append(errs, handlers.FieldError{Field: "name", Code: "REQUIRED", Message: "name is required"})
 	} else if nameLen > 128 {
 		errs = append(errs, handlers.FieldError{Field: "name", Code: "MAX_LENGTH", Message: "name must be 128 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(name) {
+	} else if !kebabCaseRe.MatchString(req.Name) {
 		errs = append(errs, handlers.FieldError{Field: "name", Code: "INVALID_FORMAT", Message: "name must match ^[a-z][a-z0-9-]*$"})
 	}
 
 	// content: must not be empty; upper bound of 100KB guards against DoS
 	// (real pattern files top out around 18KB per design doc)
-	if len(content) == 0 {
+	if len(req.Content) == 0 {
 		errs = append(errs, handlers.FieldError{Field: "content", Code: "REQUIRED", Message: "content is required"})
-	} else if len(content) > 100_000 {
+	} else if len(req.Content) > 100_000 {
 		errs = append(errs, handlers.FieldError{Field: "content", Code: "TOO_LARGE", Message: "content must be 100000 bytes or fewer"})
 	}
 
 	// description: optional, max 500 chars
-	if description != nil && utf8.RuneCountInString(*description) > 500 {
+	if req.Description != nil && utf8.RuneCountInString(*req.Description) > 500 {
 		errs = append(errs, handlers.FieldError{Field: "description", Code: "MAX_LENGTH", Message: "description must be 500 characters or fewer"})
 	}
 
 	// tags: max 20 items
-	if len(tags) > 20 {
+	if len(req.Tags) > 20 {
 		errs = append(errs, handlers.FieldError{Field: "tags", Code: "MAX_ITEMS", Message: "tags must contain 20 items or fewer"})
 	}
 
 	// entity_type: required, max 100 chars, must match ^[a-z][a-z0-9-]*$
-	entityTypeLen := utf8.RuneCountInString(entityType)
+	entityTypeLen := utf8.RuneCountInString(req.EntityType)
 	if entityTypeLen == 0 {
 		errs = append(errs, handlers.FieldError{Field: "entity_type", Code: "REQUIRED", Message: "entity_type is required"})
 	} else if entityTypeLen > 100 {
 		errs = append(errs, handlers.FieldError{Field: "entity_type", Code: "MAX_LENGTH", Message: "entity_type must be 100 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(entityType) {
+	} else if !kebabCaseRe.MatchString(req.EntityType) {
 		errs = append(errs, handlers.FieldError{Field: "entity_type", Code: "INVALID_FORMAT", Message: "entity_type must match ^[a-z][a-z0-9-]*$"})
 	}
 
 	// language: required, must be kebab-case, max 64 chars, and must be one of the allowed values.
-	if language == "" {
+	if req.Language == "" {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "REQUIRED", Message: "language is required"})
-	} else if utf8.RuneCountInString(language) > 64 {
+	} else if utf8.RuneCountInString(req.Language) > 64 {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "MAX_LENGTH", Message: "language must be 64 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(language) {
+	} else if !kebabCaseRe.MatchString(req.Language) {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "INVALID_FORMAT", Message: "language must match ^[a-z][a-z0-9-]*$"})
-	} else if !slices.Contains(h.allowedLanguages, language) {
+	} else if !slices.Contains(h.allowedLanguages, req.Language) {
 		errs = append(errs, handlers.FieldError{Field: "language", Code: "INVALID_VALUE", Message: "language is not an allowed value"})
 	}
 
 	// domain: required, must be kebab-case, max 64 chars, and must be one of the allowed values.
-	if domain == "" {
+	if req.Domain == "" {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "REQUIRED", Message: "domain is required"})
-	} else if utf8.RuneCountInString(domain) > 64 {
+	} else if utf8.RuneCountInString(req.Domain) > 64 {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "MAX_LENGTH", Message: "domain must be 64 characters or fewer"})
-	} else if !kebabCaseRe.MatchString(domain) {
+	} else if !kebabCaseRe.MatchString(req.Domain) {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "INVALID_FORMAT", Message: "domain must match ^[a-z][a-z0-9-]*$"})
-	} else if !slices.Contains(h.allowedDomains, domain) {
+	} else if !slices.Contains(h.allowedDomains, req.Domain) {
 		errs = append(errs, handlers.FieldError{Field: "domain", Code: "INVALID_VALUE", Message: "domain is not an allowed value"})
 	}
 
@@ -371,6 +358,23 @@ func parseID(c *gin.Context) (uuid.UUID, bool) {
 	return id, true
 }
 
+// bindPattern binds and validates a create or update body, responding 400
+// when it is malformed or a field is invalid.
+func (h *Handler) bindPattern(c *gin.Context) (patternsvc.Input, bool) {
+	var req patternRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		handlers.RespondValidationError(c, "The request body contains invalid fields", nil)
+		return patternsvc.Input{}, false
+	}
+
+	if fieldErrs := h.validatePatternFields(req); len(fieldErrs) > 0 {
+		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
+		return patternsvc.Input{}, false
+	}
+
+	return patternsvc.Input(req), true
+}
+
 // --- Handlers ---
 
 // Create handles POST /v1/api/patterns.
@@ -379,35 +383,19 @@ func parseID(c *gin.Context) (uuid.UUID, bool) {
 // @Tags         Patterns
 // @Accept       json
 // @Produce      json
-// @Param        body  body      patternCreateRequest  true  "Pattern to create"
+// @Param        body  body      patternRequest  true  "Pattern to create"
 // @Success      202   {object}  patternResponse
 // @Failure      400   {object}  handlers.ProblemDetail
 // @Failure      409   {object}  handlers.ProblemDetail
 // @Failure      500   {object}  handlers.ProblemDetail
 // @Router       /patterns [post]
 func (h *Handler) Create(c *gin.Context) {
-	var req patternCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", nil)
+	input, ok := h.bindPattern(c)
+	if !ok {
 		return
 	}
 
-	if fieldErrs := h.validatePatternFields(req.Name, req.Content, req.Description, req.Tags, req.EntityType, req.Language, req.Domain); len(fieldErrs) > 0 {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
-		return
-	}
-
-	pattern, err := h.patternSvc.Create(c.Request.Context(), patternsvc.CreateInput{
-		Name:            req.Name,
-		Description:     req.Description,
-		Content:         req.Content,
-		Tags:            req.Tags,
-		EntityType:      req.EntityType,
-		Language:        req.Language,
-		Domain:          req.Domain,
-		Version:         req.Version,
-		RelatedPatterns: req.RelatedPatterns,
-	})
+	pattern, err := h.patternSvc.Create(c.Request.Context(), input)
 	if err != nil {
 		handlers.RespondError(c, err)
 		return
@@ -548,8 +536,8 @@ func (h *Handler) Get(c *gin.Context) {
 // @Summary      Update pattern
 // @Tags         Patterns
 // @Accept       json
-// @Param        id    path      string                true  "Pattern UUID"
-// @Param        body  body      patternUpdateRequest  true  "Pattern fields to update"
+// @Param        id    path      string          true  "Pattern UUID"
+// @Param        body  body      patternRequest  true  "Pattern fields to update"
 // @Success      204   "No Content"
 // @Failure      400   {object}  handlers.ProblemDetail
 // @Failure      404   {object}  handlers.ProblemDetail
@@ -562,28 +550,12 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	var req patternUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", nil)
+	input, ok := h.bindPattern(c)
+	if !ok {
 		return
 	}
 
-	if fieldErrs := h.validatePatternFields(req.Name, req.Content, req.Description, req.Tags, req.EntityType, req.Language, req.Domain); len(fieldErrs) > 0 {
-		handlers.RespondValidationError(c, "The request body contains invalid fields", fieldErrs)
-		return
-	}
-
-	if _, err := h.patternSvc.Update(c.Request.Context(), id, patternsvc.UpdateInput{
-		Name:            req.Name,
-		Description:     req.Description,
-		Content:         req.Content,
-		Tags:            req.Tags,
-		EntityType:      req.EntityType,
-		Language:        req.Language,
-		Domain:          req.Domain,
-		Version:         req.Version,
-		RelatedPatterns: req.RelatedPatterns,
-	}); err != nil {
+	if _, err := h.patternSvc.Update(c.Request.Context(), id, input); err != nil {
 		handlers.RespondError(c, err)
 		return
 	}
