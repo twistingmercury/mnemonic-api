@@ -134,7 +134,17 @@ func LoadWithFlags(flags *pflag.FlagSet) (*MnemonicConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return LoadFromViper(v)
+
+	cfg := &MnemonicConfig{}
+	if err := v.Unmarshal(cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	if errs := cfg.Validate(); len(errs) > 0 {
+		return nil, fmt.Errorf("configuration validation failed:\n%w", errors.Join(errs...))
+	}
+
+	return cfg, nil
 }
 
 // Resolve layers the configuration sources into a viper instance without
@@ -171,22 +181,6 @@ func Resolve(flags *pflag.FlagSet) (*viper.Viper, error) {
 	v.AutomaticEnv()
 
 	return v, nil
-}
-
-// LoadFromViper unmarshals and validates an already-configured viper instance.
-// LoadWithFlags uses it on the output of Resolve; tests use it to load from a
-// hand-built instance.
-func LoadFromViper(v *viper.Viper) (*MnemonicConfig, error) {
-	cfg := &MnemonicConfig{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	if errs := cfg.Validate(); len(errs) > 0 {
-		return nil, fmt.Errorf("configuration validation failed:\n%w", errors.Join(errs...))
-	}
-
-	return cfg, nil
 }
 
 // SetDefaults sets all default values in the viper instance.
@@ -477,14 +471,6 @@ func (c *ServerConfig) Address() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
-// ConnectionString returns the PostgreSQL connection string.
-func (c *PostgresConfig) ConnectionString() string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		c.Host, c.Port, c.Username, c.Password, c.Database, c.SSLMode,
-	)
-}
-
 // DSN returns the PostgreSQL DSN for use with database/sql.
 // Username, password, and SSLMode are URL-encoded to handle special characters safely.
 func (c *PostgresConfig) DSN() string {
@@ -496,15 +482,6 @@ func (c *PostgresConfig) DSN() string {
 		RawQuery: fmt.Sprintf("sslmode=%s", url.QueryEscape(c.SSLMode)),
 	}
 	return u.String()
-}
-
-// SafeConnectionString returns the PostgreSQL connection string with the password masked.
-// Use this method for logging to prevent secret exposure.
-func (c *PostgresConfig) SafeConnectionString() string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=***** dbname=%s sslmode=%s",
-		c.Host, c.Port, c.Username, c.Database, c.SSLMode,
-	)
 }
 
 // SafeDSN returns the PostgreSQL DSN with the password masked.
@@ -525,11 +502,6 @@ func (c *PostgresConfig) SafeDSN() string {
 	encoded := u.User.String()
 	safe = strings.Replace(safe, encoded+"@", encoded+":*****@", 1)
 	return safe
-}
-
-// ConnectionURI returns the Neo4j URI for API consistency with PostgresConfig.
-func (c *Neo4jConfig) ConnectionURI() string {
-	return c.URI
 }
 
 // SafeURI returns the Neo4j URI with any embedded credentials masked for logging.
@@ -573,9 +545,4 @@ func (c *Neo4jConfig) SafeURI() string {
 	hostPart := rest[atIndex+1:]
 
 	return fmt.Sprintf("%s%s:*****@%s", scheme, username, hostPart)
-}
-
-// Credentials returns the username and password for use with neo4j.BasicAuth().
-func (c *Neo4jConfig) Credentials() (username, password string) {
-	return c.Username, c.Password
 }

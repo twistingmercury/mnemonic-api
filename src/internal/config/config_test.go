@@ -725,21 +725,6 @@ func TestServerAddress(t *testing.T) {
 	}
 }
 
-// TestPostgresConnectionString tests the ConnectionString() helper method.
-func TestPostgresConnectionString(t *testing.T) {
-	cfg := &config.PostgresConfig{
-		Host:     "localhost",
-		Port:     5432,
-		Database: "testdb",
-		Username: "testuser",
-		Password: "testpass",
-		SSLMode:  "require",
-	}
-
-	expected := "host=localhost port=5432 user=testuser password=testpass dbname=testdb sslmode=require"
-	assert.Equal(t, expected, cfg.ConnectionString())
-}
-
 // TestPostgresDSN tests the DSN() helper method.
 func TestPostgresDSN(t *testing.T) {
 	tests := []struct {
@@ -796,23 +781,6 @@ func TestPostgresDSN(t *testing.T) {
 	}
 }
 
-// TestPostgresSafeConnectionString tests the SafeConnectionString() helper method.
-func TestPostgresSafeConnectionString(t *testing.T) {
-	cfg := &config.PostgresConfig{
-		Host:     "localhost",
-		Port:     5432,
-		Database: "testdb",
-		Username: "testuser",
-		Password: "supersecretpassword",
-		SSLMode:  "require",
-	}
-
-	result := cfg.SafeConnectionString()
-	expected := "host=localhost port=5432 user=testuser password=***** dbname=testdb sslmode=require"
-	assert.Equal(t, expected, result)
-	assert.NotContains(t, result, "supersecretpassword")
-}
-
 // TestPostgresSafeDSN tests the SafeDSN() helper method.
 func TestPostgresSafeDSN(t *testing.T) {
 	tests := []struct {
@@ -843,40 +811,6 @@ func TestPostgresSafeDSN(t *testing.T) {
 			result := tt.cfg.SafeDSN()
 			assert.Equal(t, tt.expected, result)
 			assert.NotContains(t, result, tt.cfg.Password)
-		})
-	}
-}
-
-// TestNeo4jConnectionURI tests the ConnectionURI() helper method.
-func TestNeo4jConnectionURI(t *testing.T) {
-	tests := []struct {
-		name     string
-		uri      string
-		expected string
-	}{
-		{
-			name:     "bolt scheme",
-			uri:      "bolt://localhost:7687",
-			expected: "bolt://localhost:7687",
-		},
-		{
-			name:     "neo4j scheme",
-			uri:      "neo4j://neo4j-cluster:7687",
-			expected: "neo4j://neo4j-cluster:7687",
-		},
-		{
-			name:     "bolt+s scheme",
-			uri:      "bolt+s://secure-host:7687",
-			expected: "bolt+s://secure-host:7687",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Neo4jConfig{
-				URI: tt.uri,
-			}
-			assert.Equal(t, tt.expected, cfg.ConnectionURI())
 		})
 	}
 }
@@ -945,59 +879,6 @@ func TestNeo4jSafeURI(t *testing.T) {
 			if tt.shouldNotHave != "" {
 				assert.NotContains(t, result, tt.shouldNotHave)
 			}
-		})
-	}
-}
-
-// TestNeo4jCredentials tests the Credentials() helper method.
-func TestNeo4jCredentials(t *testing.T) {
-	tests := []struct {
-		name             string
-		username         string
-		password         string
-		expectedUsername string
-		expectedPassword string
-	}{
-		{
-			name:             "standard credentials",
-			username:         "neo4j",
-			password:         "secretpassword",
-			expectedUsername: "neo4j",
-			expectedPassword: "secretpassword",
-		},
-		{
-			name:             "empty password",
-			username:         "neo4j",
-			password:         "",
-			expectedUsername: "neo4j",
-			expectedPassword: "",
-		},
-		{
-			name:             "custom username",
-			username:         "admin",
-			password:         "admin123",
-			expectedUsername: "admin",
-			expectedPassword: "admin123",
-		},
-		{
-			name:             "special characters in password",
-			username:         "user",
-			password:         "p@ss:word!#$%",
-			expectedUsername: "user",
-			expectedPassword: "p@ss:word!#$%",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Neo4jConfig{
-				URI:      "bolt://localhost:7687",
-				Username: tt.username,
-				Password: tt.password,
-			}
-			username, password := cfg.Credentials()
-			assert.Equal(t, tt.expectedUsername, username)
-			assert.Equal(t, tt.expectedPassword, password)
 		})
 	}
 }
@@ -1470,17 +1351,11 @@ func TestOpenAIBaseURL_DefaultsToOpenAI(t *testing.T) {
 }
 
 func TestOpenAIBaseURL_EnvOverride(t *testing.T) {
-	clearMnemonicEnvVars(t)
+	isolateConfigSources(t)
 	t.Setenv("MNEMONIC_OPENAI_BASE_URL", "http://localhost:8090/v1")
 
-	v := viper.New()
-	config.SetDefaults(v)
-	v.SetEnvPrefix("MNEMONIC")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	cfg := &config.MnemonicConfig{}
-	require.NoError(t, v.Unmarshal(cfg))
+	cfg, err := config.LoadWithFlags(nil)
+	require.NoError(t, err)
 
 	assert.Equal(t, "http://localhost:8090/v1", cfg.OpenAI.BaseURL)
 }
