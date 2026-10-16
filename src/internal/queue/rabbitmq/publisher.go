@@ -22,21 +22,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-)
 
-// PublisherConfig holds the connection parameters for the RabbitMQ publisher.
-// VHost must be URL-safe; names containing special characters must be percent-encoded
-// by the caller before assignment. Credentials are passed via SASL and never embedded
-// in a URL string.
-type PublisherConfig struct {
-	Host           string
-	Port           int
-	User           string
-	Password       string // #nosec G101,G117 — value supplied via config, not hardcoded in source
-	VHost          string
-	Queue          string
-	ReconnectDelay time.Duration
-}
+	"github.com/twistingmercury/mnemonic-api/internal/config"
+)
 
 // channel is the part of *amqp.Channel the publisher uses, so tests can drive
 // the reconnect path without a broker.
@@ -47,7 +35,7 @@ type channel interface {
 
 // Publisher implements queue.Publisher backed by a RabbitMQ broker.
 type Publisher struct {
-	cfg             PublisherConfig
+	cfg             config.RabbitMQConfig
 	conn            io.Closer
 	ch              channel
 	dial            func() (io.Closer, channel, error)
@@ -55,21 +43,15 @@ type Publisher struct {
 	publishFailures metric.Int64Counter
 }
 
-// newPublishFailuresCounter creates the publish_failures_total counter instrument.
-// It is a separate function so tests can invoke it directly without a live broker.
-func newPublishFailuresCounter(meter metric.Meter) (metric.Int64Counter, error) {
-	return meter.Int64Counter(
+// NewPublisher dials the broker, opens a channel, and declares the destination
+// queue. It returns an error if any step fails, cleaning up partial resources
+// before returning. The meter is used to record publish failure counts.
+func NewPublisher(cfg config.RabbitMQConfig, meter metric.Meter) (*Publisher, error) {
+	counter, err := meter.Int64Counter(
 		"mnemonic.queue.publish_failures_total",
 		metric.WithDescription("Total number of times Publish failed after all retry attempts"),
 		metric.WithUnit("{failure}"),
 	)
-}
-
-// NewPublisher dials the broker, opens a channel, and declares the destination
-// queue. It returns an error if any step fails, cleaning up partial resources
-// before returning. The meter is used to record publish failure counts.
-func NewPublisher(cfg PublisherConfig, meter metric.Meter) (*Publisher, error) {
-	counter, err := newPublishFailuresCounter(meter)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: create publish failures counter: %w", err)
 	}
@@ -86,7 +68,8 @@ func NewPublisher(cfg PublisherConfig, meter metric.Meter) (*Publisher, error) {
 }
 
 // dialBroker opens a connection and channel and declares the queue, closing
-// whatever it opened if a later step fails.
+// whatever it opened if a later step fails. Credentials go through SASL and
+// are never embedded in the URL.
 func (p *Publisher) dialBroker() (io.Closer, channel, error) {
 	conn, err := amqp.DialConfig(
 		fmt.Sprintf("amqp://%s:%d/", p.cfg.Host, p.cfg.Port),

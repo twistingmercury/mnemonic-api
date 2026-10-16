@@ -177,15 +177,7 @@ func wireDependencies(
 	embeddingSvc := openaisvc.NewEmbeddingService(cfg.OpenAI)
 
 	// Publisher.
-	pub, err := rabbitmq.NewPublisher(rabbitmq.PublisherConfig{
-		Host:           cfg.Queue.RabbitMQ.Host,
-		Port:           cfg.Queue.RabbitMQ.Port,
-		User:           cfg.Queue.RabbitMQ.User,
-		Password:       cfg.Queue.RabbitMQ.Password,
-		VHost:          cfg.Queue.RabbitMQ.VHost,
-		Queue:          cfg.Queue.RabbitMQ.Queue,
-		ReconnectDelay: cfg.Queue.RabbitMQ.ReconnectDelay,
-	}, meter)
+	pub, err := rabbitmq.NewPublisher(cfg.Queue.RabbitMQ, meter)
 	if err != nil {
 		return Services{}, nil, fmt.Errorf("wire publisher: %w", err)
 	}
