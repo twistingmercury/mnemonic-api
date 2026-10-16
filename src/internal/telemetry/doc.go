@@ -1,6 +1,6 @@
-// Package telemetry provides OpenTelemetry initialization and access for
-// Mnemonic's logging, metrics, and distributed tracing. It wraps the otelx
-// library to configure application-specific observability with trace-correlated
+// Package telemetry provides OpenTelemetry initialization for
+// Mnemonic's logging, metrics, and distributed tracing. It configures the otelx
+// library for application-specific observability with trace-correlated
 // structured logging via zerolog.
 //
 // Documentation:

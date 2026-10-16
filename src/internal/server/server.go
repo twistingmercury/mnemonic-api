@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/google/uuid"
@@ -50,13 +50,12 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 		return fmt.Errorf("failed to initialize telemetry: %w", err)
 	}
 	defer func() {
-		logger := tel.Logger()
 		if shutdownErr := tel.Shutdown(context.Background()); shutdownErr != nil {
-			logger.Error().Err(shutdownErr).Msg("telemetry shutdown error")
+			tel.Logger.Error().Err(shutdownErr).Msg("telemetry shutdown error")
 		}
 	}()
 
-	logger := tel.Logger()
+	logger := tel.Logger
 	logger.Info().
 		Str("host", cfg.Server.Host).
 		Int("admin_port", cfg.Server.Port).
@@ -72,7 +71,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	defer closeDatabases(pgPool, neo4jDriver, logger)
 
 	// Wire all dependencies.
-	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger, tel.Meter("mnemonic/queue"), tel.MetricsRegistry())
+	svc, pub, err := wireDependencies(pgPool, neo4jDriver, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("failed to wire dependencies: %w", err)
 	}
@@ -83,7 +82,7 @@ func ListenAndServe(cfg *config.MnemonicConfig) error {
 	}()
 
 	// Create request metrics middleware.
-	requestMetrics, err := middleware.NewRequestMetrics(tel.Meter("mnemonic/http"))
+	requestMetrics, err := middleware.NewRequestMetrics(otel.Meter("mnemonic/http"))
 	if err != nil {
 		return fmt.Errorf("failed to create request metrics: %w", err)
 	}
@@ -164,9 +163,14 @@ func wireDependencies(
 	neo4jDriver neo4j.DriverWithContext,
 	cfg *config.MnemonicConfig,
 	logger zerolog.Logger,
-	meter metric.Meter,
-	registry *metrics.Registry,
 ) (Services, *rabbitmq.Publisher, error) {
+	// Telemetry installs its meter provider globally, so the instruments are
+	// created from otel.Meter.
+	registry, err := metrics.NewRegistry(otel.Meter("mnemonic"))
+	if err != nil {
+		return Services{}, nil, fmt.Errorf("create metrics registry: %w", err)
+	}
+
 	// Repositories.
 	patternRepo := patternrepo.NewRepository(pgPool)
 	enrichmentJobRepo := enrichmentjobrepo.NewRepository(pgPool)
@@ -177,7 +181,7 @@ func wireDependencies(
 	embeddingSvc := openaisvc.NewEmbeddingService(cfg.OpenAI)
 
 	// Publisher.
-	pub, err := rabbitmq.NewPublisher(cfg.Queue.RabbitMQ, meter)
+	pub, err := rabbitmq.NewPublisher(cfg.Queue.RabbitMQ, otel.Meter("mnemonic/queue"))
 	if err != nil {
 		return Services{}, nil, fmt.Errorf("wire publisher: %w", err)
 	}

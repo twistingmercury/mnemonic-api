@@ -75,14 +75,6 @@ func TestInitialize(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tel)
 
-	// Verify we can get a logger
-	logger := tel.Logger()
-	assert.NotNil(t, logger)
-
-	// Verify we can get a meter
-	meter := tel.Meter("test")
-	assert.NotNil(t, meter)
-
 	// Clean shutdown
 	err = tel.Shutdown(ctx)
 	assert.NoError(t, err)
