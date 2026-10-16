@@ -27,7 +27,7 @@ import (
 //   - id: UUID (server-generated)
 //   - name: Pattern name (^[a-z][a-z0-9-]*$, 1-128 chars)
 //   - description: Optional (max 500 chars)
-//   - content: Markdown (1-10240 bytes)
+//   - content: Markdown (1-100000 bytes)
 //   - tags: Optional (max 20 items)
 //   - enrichment_status: pending | enriched | failed (async processing)
 //

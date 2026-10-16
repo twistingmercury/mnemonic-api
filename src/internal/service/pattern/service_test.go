@@ -306,7 +306,6 @@ func newTestService(
 ) patternsvc.Service {
 	logger := zerolog.Nop()
 	// chunkRepo is wired: exercises the chunk-aware enrichment job path.
-	// Plain content (no [//]: pattern decorators) produces no chunks; CreateBatch is not called.
 	return patternsvc.New(pr, er, gr, tb, new(mockChunkRepo), &mockPublisher{}, logger)
 }
 
@@ -414,7 +413,8 @@ func TestCreate(t *testing.T) {
 		er := new(mockEnrichmentRepo)
 		gr := new(mockGraphRepo)
 		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
+		cr := new(mockChunkRepo)
+		svc := newTestServiceWithChunkRepo(pr, er, gr, tb, cr)
 
 		expectCommittedTx(tb)
 		// The write must go through the transaction, not the pool.
@@ -425,6 +425,13 @@ func TestCreate(t *testing.T) {
 			p.ID = testPatternID
 			p.EnrichmentStatus = "pending"
 		}).Return(nil)
+		// Undecorated content becomes one whole-content chunk with one job.
+		cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
+			return len(chunks) == 1 && chunks[0].Content == "Always handle errors explicitly."
+		})).Return(nil)
+		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
+			return len(ids) == 1
+		})).Return([]uuid.UUID{uuid.New()}, nil).Once()
 
 		result, err := svc.Create(context.Background(), testCreateInput())
 
@@ -654,11 +661,16 @@ func TestUpdate(t *testing.T) {
 			return p.ID == testPatternID && p.Name == "go-error-handling-v2" && p.Content == "Updated content."
 		})).Return(nil)
 
-		// Delete stale chunks ("Updated content." has no [//]: pattern sections → 0 chunks).
 		cr.tx().On("DeleteByPatternID", mock.Anything, testPatternID).Return(nil)
 
-		// No CreateBatch call (0 chunks).
-		// No er.tx().On("CreatePendingForChunks") call (0 chunks → no jobs).
+		// "Updated content." has no [//]: pattern section, so it becomes one
+		// whole-content chunk with one job rather than none.
+		cr.tx().On("CreateBatch", mock.Anything, mock.MatchedBy(func(chunks []*chunkrepo.Chunk) bool {
+			return len(chunks) == 1 && chunks[0].Content == "Updated content." && chunks[0].SectionTitle == "Content"
+		})).Return(nil)
+		er.tx().On("CreatePendingForChunks", mock.Anything, mock.MatchedBy(func(ids []uuid.UUID) bool {
+			return len(ids) == 1
+		})).Return([]uuid.UUID{uuid.New()}, nil).Once()
 
 		result, err := svc.Update(context.Background(), testPatternID, input)
 

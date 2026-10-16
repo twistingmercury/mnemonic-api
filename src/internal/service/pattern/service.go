@@ -152,7 +152,8 @@ type chunk struct {
 // preceded by a "[//]: pattern" decorator line. The heading following the
 // decorator becomes the chunk title; all subsequent lines until the next
 // decorator (or EOF) form the body. Lines outside decorated sections are
-// discarded.
+// discarded. Content with no decorated section becomes a single chunk, so
+// every pattern gets an enrichment job instead of staying pending forever.
 func splitIntoChunks(content string) []chunk {
 	var chunks []chunk
 	var currentTitle string
@@ -187,7 +188,26 @@ func splitIntoChunks(content string) []chunk {
 	}
 	flush()
 
+	if len(chunks) == 0 {
+		if body := strings.TrimSpace(content); body != "" {
+			chunks = append(chunks, chunk{Title: firstHeading(body), Content: body})
+		}
+	}
+
 	return chunks
+}
+
+// firstHeading returns the text of the first markdown heading in content, or
+// "Content" when there is none.
+func firstHeading(content string) string {
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.HasPrefix(line, "#") {
+			if title := strings.TrimSpace(strings.TrimLeft(line, "#")); title != "" {
+				return title
+			}
+		}
+	}
+	return "Content"
 }
 
 // publishJob enqueues jobID for async enrichment. Errors are best-effort:

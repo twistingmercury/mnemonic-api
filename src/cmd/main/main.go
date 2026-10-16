@@ -89,7 +89,7 @@ func checkHealth(flags *pflag.FlagSet) (exitCode int) {
 		fmt.Fprintf(os.Stderr, "unhealthy: %v\n", err)
 		return 1
 	}
-	url := fmt.Sprintf("http://localhost:%d%s", port, config.DefaultHealthPath)
+	url := fmt.Sprintf("http://localhost:%d/health", port)
 
 	client := &http.Client{Timeout: healthCheckTimeout}
 

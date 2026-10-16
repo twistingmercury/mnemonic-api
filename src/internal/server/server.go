@@ -34,6 +34,7 @@ import (
 	patternsvc "github.com/twistingmercury/mnemonic-api/internal/service/pattern"
 	searchsvc "github.com/twistingmercury/mnemonic-api/internal/service/search"
 	"github.com/twistingmercury/mnemonic-api/internal/telemetry"
+	"github.com/twistingmercury/mnemonic-api/internal/version"
 )
 
 // ListenAndServe starts the mnemonic server. It initializes telemetry,
@@ -264,7 +265,7 @@ func setupRouter(logger zerolog.Logger, requestMetrics *middleware.RequestMetric
 		c.Next()
 	})
 	skipPaths := middleware.DefaultSkipPaths
-	router.Use(middleware.TracingMiddlewareWithSkipPaths("mnemonic", skipPaths))
+	router.Use(middleware.TracingMiddlewareWithSkipPaths(version.Service, skipPaths))
 	router.Use(middleware.CompletionLogging(logger, skipPaths))
 	router.Use(requestMetrics.MiddlewareWithSkipPaths(skipPaths))
 	// Recovery must be inside every completion wrapper. Do not use Gin's default

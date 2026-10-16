@@ -17,7 +17,7 @@ type Pattern struct {
 	// Description is an optional description of when/how to use this pattern.
 	Description *string `db:"description"`
 
-	// Content is the actual context text that will be injected into prompts (up to 10KB).
+	// Content is the actual context text that will be injected into prompts (up to 100,000 bytes, enforced by the API handler).
 	Content string `db:"content"`
 
 	// Tags is a list of categorization tags (e.g., ["golang", "best-practices"]).

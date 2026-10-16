@@ -41,27 +41,19 @@ func createTestConfig() *config.MnemonicConfig {
 			},
 		},
 		OpenAI: config.OpenAIConfig{
-			EmbeddingModel:       "text-embedding-3-small",
-			EmbeddingDimensions:  1536,
-			ExtractionModel:      "gpt-4o-mini",
-			MaxRequestsPerMinute: 500,
-			RetryAttempts:        3,
-			RetryDelay:           time.Second,
+			EmbeddingModel:      "text-embedding-3-small",
+			EmbeddingDimensions: 1536,
+			RetryAttempts:       3,
+			RetryDelay:          time.Second,
 		},
 		Logging: config.LoggingConfig{
-			Level:         "info",
-			Format:        "json",
-			IncludeCaller: false,
+			Level: "info",
 		},
 		Observability: config.ObservabilityConfig{
 			Metrics: config.MetricsConfig{
 				Enabled: false, // Disable for tests
 				Path:    "/metrics",
 				Port:    9090,
-			},
-			Health: config.HealthConfig{
-				Enabled: true,
-				Path:    "/health",
 			},
 			Tracing: config.TracingConfig{
 				Enabled:      false, // Disable for tests
