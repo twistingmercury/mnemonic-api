@@ -6,9 +6,6 @@ import "github.com/google/uuid"
 type Concept struct {
 	// Name is the normalized lowercase name of the concept.
 	Name string
-
-	// Type classifies the concept: technology, practice, or domain.
-	Type string
 }
 
 // RelatedPattern represents a pattern discovered through shared concepts.

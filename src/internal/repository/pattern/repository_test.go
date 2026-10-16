@@ -3,7 +3,6 @@ package pattern_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -642,74 +641,6 @@ func TestRepository_List(t *testing.T) {
 					assert.Equal(t, expectedName, patterns[i].Name)
 					assert.Empty(t, patterns[i].Content, "list never loads content")
 				}
-			}
-
-			assert.NoError(t, mock.ExpectationsWereMet())
-		})
-	}
-}
-
-func TestRepository_Exists(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		patternID  uuid.UUID
-		setupMock  func(mock pgxmock.PgxPoolIface)
-		wantExists bool
-		wantErr    error
-	}{
-		{
-			name:      "pattern exists",
-			patternID: uuid.New(),
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectQuery("SELECT EXISTS").
-					WithArgs(pgxmock.AnyArg()).
-					WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(true))
-			},
-			wantExists: true,
-		},
-		{
-			name:      "pattern does not exist",
-			patternID: uuid.New(),
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectQuery("SELECT EXISTS").
-					WithArgs(pgxmock.AnyArg()).
-					WillReturnRows(pgxmock.NewRows([]string{"exists"}).AddRow(false))
-			},
-			wantExists: false,
-		},
-		{
-			name:      "database error",
-			patternID: uuid.New(),
-			setupMock: func(mock pgxmock.PgxPoolIface) {
-				mock.ExpectQuery("SELECT EXISTS").
-					WithArgs(pgxmock.AnyArg()).
-					WillReturnError(errors.New("connection failed"))
-			},
-			wantExists: false,
-			wantErr:    errors.New("connection failed"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			mock, err := pgxmock.NewPool()
-			require.NoError(t, err)
-			defer mock.Close()
-
-			tt.setupMock(mock)
-
-			repo := pattern.NewRepository(mock)
-			exists, err := repo.Exists(context.Background(), tt.patternID)
-
-			if tt.wantErr != nil {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.wantExists, exists)
 			}
 
 			assert.NoError(t, mock.ExpectationsWereMet())

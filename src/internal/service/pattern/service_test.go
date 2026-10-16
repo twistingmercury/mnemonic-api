@@ -81,11 +81,6 @@ func (m *mockPatternRepo) FindSimilar(ctx context.Context, embedding []float32, 
 	return args.Get(0).([]*patternrepo.Match), args.Error(1)
 }
 
-func (m *mockPatternRepo) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
-	args := m.Called(ctx, id)
-	return args.Bool(0), args.Error(1)
-}
-
 func (m *mockPatternRepo) WithTx(_ repository.DBTX) patternrepo.Repository {
 	return m.tx()
 }
@@ -126,14 +121,6 @@ type mockGraphRepo struct {
 func (m *mockGraphRepo) DeletePattern(ctx context.Context, patternID uuid.UUID) error {
 	args := m.Called(ctx, patternID)
 	return args.Error(0)
-}
-
-func (m *mockGraphRepo) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]graphrepo.RelatedPattern, error) {
-	args := m.Called(ctx, patternID, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]graphrepo.RelatedPattern), args.Error(1)
 }
 
 func (m *mockGraphRepo) GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (*graphrepo.PatternGraph, error) {
@@ -563,8 +550,8 @@ func TestGetWithGraph(t *testing.T) {
 				},
 			},
 			Concepts: []graphrepo.Concept{
-				{Name: "error-handling", Type: "practice"},
-				{Name: "golang", Type: "technology"},
+				{Name: "error-handling"},
+				{Name: "golang"},
 			},
 		}, nil)
 
@@ -583,7 +570,6 @@ func TestGetWithGraph(t *testing.T) {
 
 		assert.Len(t, graphCtx.Concepts, 2)
 		assert.Equal(t, "error-handling", graphCtx.Concepts[0].Name)
-		assert.Equal(t, "practice", graphCtx.Concepts[0].Type)
 
 		pr.AssertExpectations(t)
 		gr.AssertExpectations(t)
@@ -1171,67 +1157,6 @@ func TestList(t *testing.T) {
 		assert.Equal(t, int64(2), total)
 
 		pr.AssertExpectations(t)
-	})
-}
-
-// ---------- FindRelated ----------
-
-func TestFindRelated(t *testing.T) {
-	t.Parallel()
-
-	t.Run("happy path", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
-
-		pr.On("Exists", mock.Anything, testPatternID).Return(true, nil)
-
-		gr.On("FindRelatedPatterns", mock.Anything, testPatternID, 5).Return([]graphrepo.RelatedPattern{
-			{
-				ID:             testRelatedID,
-				Name:           "go-concurrency",
-				SharedConcepts: 3,
-				Similarity:     0.8,
-				ConceptNames:   []string{"goroutines", "channels", "select"},
-			},
-		}, nil)
-
-		results, err := svc.FindRelated(context.Background(), testPatternID, 5)
-
-		require.NoError(t, err)
-		require.Len(t, results, 1)
-		assert.Equal(t, testRelatedID, results[0].ID)
-		assert.Equal(t, "go-concurrency", results[0].Name)
-		assert.Equal(t, "RELATED_TO", results[0].Relationship)
-		assert.InDelta(t, 0.8, results[0].Similarity, 0.001)
-		assert.Equal(t, []string{"goroutines", "channels", "select"}, results[0].SharedConcepts)
-
-		pr.AssertExpectations(t)
-		gr.AssertExpectations(t)
-	})
-
-	t.Run("pattern not found", func(t *testing.T) {
-		t.Parallel()
-
-		pr := new(mockPatternRepo)
-		er := new(mockEnrichmentRepo)
-		gr := new(mockGraphRepo)
-		tb := new(mockTxBeginner)
-		svc := newTestService(pr, er, gr, tb)
-
-		pr.On("Exists", mock.Anything, testPatternID).Return(false, nil)
-
-		results, err := svc.FindRelated(context.Background(), testPatternID, 5)
-
-		assert.Nil(t, results)
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, service.ErrNotFound), "expected service.ErrNotFound, got: %v", err)
-
-		gr.AssertNotCalled(t, "FindRelatedPatterns")
 	})
 }
 

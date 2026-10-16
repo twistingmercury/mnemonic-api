@@ -84,14 +84,6 @@ func (m *mockPatternService) List(ctx context.Context, filter patternrepo.Filter
 	return args.Get(0).([]*patternrepo.Pattern), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *mockPatternService) FindRelated(ctx context.Context, patternID uuid.UUID, limit int) ([]patternsvc.RelatedPatternResult, error) {
-	args := m.Called(ctx, patternID, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]patternsvc.RelatedPatternResult), args.Error(1)
-}
-
 func (m *mockPatternService) ListChunks(ctx context.Context, patternID uuid.UUID) ([]*chunkrepo.Chunk, error) {
 	args := m.Called(ctx, patternID)
 	if args.Get(0) == nil {

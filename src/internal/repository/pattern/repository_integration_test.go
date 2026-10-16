@@ -254,18 +254,16 @@ func TestIntegration_Delete(t *testing.T) {
 		require.NoError(t, repo.Create(ctx, testPattern))
 
 		// Verify it exists
-		exists, err := repo.Exists(ctx, testPattern.ID)
+		_, err := repo.Get(ctx, testPattern.ID)
 		require.NoError(t, err)
-		require.True(t, exists)
 
 		// Delete it
 		err = repo.Delete(ctx, testPattern.ID)
 		require.NoError(t, err)
 
 		// Verify it's gone
-		exists, err = repo.Exists(ctx, testPattern.ID)
-		require.NoError(t, err)
-		assert.False(t, exists)
+		_, err = repo.Get(ctx, testPattern.ID)
+		assert.ErrorIs(t, err, pattern.ErrNotFound)
 	})
 
 	t.Run("returns ErrNotFound for nonexistent pattern", func(t *testing.T) {
@@ -372,33 +370,6 @@ func TestIntegration_List(t *testing.T) {
 			assert.LessOrEqual(t, result[i-1].Name, result[i].Name,
 				"results should be ordered by name")
 		}
-	})
-}
-
-func TestIntegration_Exists(t *testing.T) {
-	pool := setupTestDB(t)
-	cleanupTestPatterns(t, pool)
-	t.Cleanup(func() { cleanupTestPatterns(t, pool) })
-
-	repo := pattern.NewRepository(pool)
-	ctx := context.Background()
-
-	// Create a test pattern
-	testPattern := testIntegrationPattern("exists-test")
-	require.NoError(t, repo.Create(ctx, testPattern))
-
-	t.Run("returns true for existing pattern", func(t *testing.T) {
-		exists, err := repo.Exists(ctx, testPattern.ID)
-
-		require.NoError(t, err)
-		assert.True(t, exists)
-	})
-
-	t.Run("returns false for nonexistent pattern", func(t *testing.T) {
-		exists, err := repo.Exists(ctx, uuid.New())
-
-		require.NoError(t, err)
-		assert.False(t, exists)
 	})
 }
 

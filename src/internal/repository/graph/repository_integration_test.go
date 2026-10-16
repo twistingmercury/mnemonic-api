@@ -155,57 +155,6 @@ func TestIntegration_DeletePattern(t *testing.T) {
 	})
 }
 
-func TestIntegration_FindRelatedPatterns(t *testing.T) {
-	driver, repo := setupNeo4j(t)
-	ctx := context.Background()
-
-	// pA shares 3 concepts with pB and 1 with pC; pD shares none.
-	pA := seedPattern(t, driver, "related-a", "go", "concurrency", "channels", "error-handling")
-	pB := seedPattern(t, driver, "related-b", "go", "concurrency", "channels")
-	pC := seedPattern(t, driver, "related-c", "go", "testing")
-	pD := seedPattern(t, driver, "related-unique", "python", "django")
-	relate(t, driver, pA, pB, 0.75)
-	relate(t, driver, pC, pA, 0.25) // edge direction must not matter
-
-	t.Run("orders by similarity with shared concepts", func(t *testing.T) {
-		results, err := repo.FindRelatedPatterns(ctx, pA, 10)
-		require.NoError(t, err)
-		require.Len(t, results, 2)
-
-		assert.Equal(t, pB, results[0].ID)
-		assert.Equal(t, testIntegrationPatternPrefix+"related-b", results[0].Name)
-		assert.Equal(t, 3, results[0].SharedConcepts)
-		assert.InDelta(t, 0.75, results[0].Similarity, 0.001)
-		assert.ElementsMatch(t, []string{
-			testIntegrationConceptPrefix + "go",
-			testIntegrationConceptPrefix + "concurrency",
-			testIntegrationConceptPrefix + "channels",
-		}, results[0].ConceptNames)
-
-		assert.Equal(t, pC, results[1].ID)
-		assert.Equal(t, 1, results[1].SharedConcepts)
-	})
-
-	t.Run("pattern with no edges has no results", func(t *testing.T) {
-		results, err := repo.FindRelatedPatterns(ctx, pD, 10)
-		require.NoError(t, err)
-		assert.Empty(t, results)
-	})
-
-	t.Run("respects limit", func(t *testing.T) {
-		results, err := repo.FindRelatedPatterns(ctx, pA, 1)
-		require.NoError(t, err)
-		require.Len(t, results, 1)
-		assert.Equal(t, pB, results[0].ID)
-	})
-
-	t.Run("nonexistent pattern has no results", func(t *testing.T) {
-		results, err := repo.FindRelatedPatterns(ctx, uuid.New(), 10)
-		require.NoError(t, err)
-		assert.Empty(t, results)
-	})
-}
-
 func TestIntegration_GetPatternGraph(t *testing.T) {
 	driver, repo := setupNeo4j(t)
 	ctx := context.Background()
@@ -224,9 +173,6 @@ func TestIntegration_GetPatternGraph(t *testing.T) {
 		assert.Equal(t, testIntegrationConceptPrefix+"alpha", g.Concepts[0].Name)
 		assert.Equal(t, testIntegrationConceptPrefix+"beta", g.Concepts[1].Name)
 		assert.Equal(t, testIntegrationConceptPrefix+"gamma", g.Concepts[2].Name)
-		for _, c := range g.Concepts {
-			assert.Equal(t, "technology", c.Type)
-		}
 
 		require.Len(t, g.RelatedPatterns, 2)
 		assert.Equal(t, pC, g.RelatedPatterns[0].ID, "ordered by similarity")
@@ -285,9 +231,6 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 
 	assert.Error(t, repo.DeletePattern(ctx, uuid.New()))
 
-	_, err := repo.FindRelatedPatterns(ctx, uuid.New(), 10)
-	assert.Error(t, err)
-
-	_, err = repo.GetPatternGraph(ctx, uuid.New(), 10)
+	_, err := repo.GetPatternGraph(ctx, uuid.New(), 10)
 	assert.Error(t, err)
 }

@@ -47,10 +47,6 @@ type Service interface {
 	// List retrieves patterns with filtering and pagination.
 	List(ctx context.Context, filter patternRepo.Filter, opts ListOptions) ([]*patternRepo.Pattern, int64, error)
 
-	// FindRelated finds patterns related to the given pattern via the Neo4j
-	// knowledge graph. Returns service.ErrNotFound if the pattern does not exist.
-	FindRelated(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPatternResult, error)
-
 	// ListChunks retrieves chunk summaries (no content) for a pattern, ordered
 	// by chunk_index. It returns an empty slice when the pattern has no chunks
 	// and does not check that the pattern exists.
@@ -101,7 +97,6 @@ type RelatedPatternResult struct {
 // ConceptResult represents a concept linked to a pattern.
 type ConceptResult struct {
 	Name string
-	Type string
 }
 
 // ListOptions defines service-layer pagination parameters.
@@ -419,36 +414,6 @@ func (s *patternService) List(ctx context.Context, filter patternRepo.Filter, op
 	return patterns, total, nil
 }
 
-// FindRelated finds patterns related to the given pattern via the knowledge graph.
-func (s *patternService) FindRelated(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPatternResult, error) {
-	// Verify pattern exists.
-	exists, err := s.patternRepo.Exists(ctx, patternID)
-	if err != nil {
-		return nil, fmt.Errorf("find related: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("%w: pattern %s", service.ErrNotFound, patternID)
-	}
-
-	related, err := s.graphRepo.FindRelatedPatterns(ctx, patternID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("find related: %w", err)
-	}
-
-	results := make([]RelatedPatternResult, len(related))
-	for i, r := range related {
-		results[i] = RelatedPatternResult{
-			ID:             r.ID,
-			Name:           r.Name,
-			Relationship:   "RELATED_TO",
-			Similarity:     r.Similarity,
-			SharedConcepts: r.ConceptNames,
-		}
-	}
-
-	return results, nil
-}
-
 // ListChunks retrieves chunk summaries for a pattern, ordered by chunk_index.
 // It does not check that the pattern exists; callers that need a 404 already
 // load the pattern first, so a second lookup here would only repeat that read.
@@ -482,10 +447,7 @@ func (s *patternService) fetchGraphContext(ctx context.Context, patternID uuid.U
 
 	conceptResults := make([]ConceptResult, len(concepts))
 	for i, c := range concepts {
-		conceptResults[i] = ConceptResult{
-			Name: c.Name,
-			Type: c.Type,
-		}
+		conceptResults[i] = ConceptResult{Name: c.Name}
 	}
 
 	return &GraphContext{

@@ -32,9 +32,6 @@ type Repository interface {
 	// Returns the patterns (with Content left empty), total count, and any error.
 	List(ctx context.Context, filter Filter, opts repository.ListOptions) ([]*Pattern, int64, error)
 
-	// Exists checks if a pattern with the given ID exists.
-	Exists(ctx context.Context, id uuid.UUID) (bool, error)
-
 	// WithTx returns a Repository that executes all operations within db.
 	// Use this to enlist the repository in a caller-owned transaction.
 	WithTx(db repository.DBTX) Repository
@@ -392,19 +389,6 @@ func (r *pgxRepository) List(ctx context.Context, filter Filter, opts repository
 	}
 
 	return patterns, totalCount, nil
-}
-
-// Exists checks if a pattern with the given ID exists.
-func (r *pgxRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM patterns WHERE id = $1)`
-
-	var exists bool
-	err := r.db.QueryRow(ctx, query, id).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("checking pattern exists: %w", err)
-	}
-
-	return exists, nil
 }
 
 // WithTx returns a new Repository that executes all operations within db.

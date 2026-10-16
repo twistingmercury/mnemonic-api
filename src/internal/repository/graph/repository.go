@@ -28,10 +28,6 @@ type Repository interface {
 	// GetPatternGraph returns up to relatedLimit related patterns and all
 	// concepts for a pattern, using a single session and read transaction.
 	GetPatternGraph(ctx context.Context, patternID uuid.UUID, relatedLimit int) (*PatternGraph, error)
-
-	// FindRelatedPatterns finds patterns related to the given pattern using pre-computed RELATED_TO edges.
-	// Results include similarity scores and shared concept names.
-	FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) ([]RelatedPattern, error)
 }
 
 // neo4jRepository is a Neo4j implementation of Repository.
@@ -74,18 +70,11 @@ func (r *neo4jRepository) instrument(ctx context.Context, op string) (context.Co
 
 var errNilPatternID = errors.New("patternID must not be nil UUID")
 
-// query runs one auto-committed, retried Cypher statement and returns its records.
-func (r *neo4jRepository) query(ctx context.Context, write bool, cypher string, params map[string]any) ([]*neo4j.Record, error) {
-	routing := neo4j.ExecuteQueryWithReadersRouting()
-	if write {
-		routing = neo4j.ExecuteQueryWithWritersRouting()
-	}
-	res, err := neo4j.ExecuteQuery(ctx, r.driver, cypher, params, neo4j.EagerResultTransformer,
-		neo4j.ExecuteQueryWithDatabase(r.database), routing)
-	if err != nil {
-		return nil, err
-	}
-	return res.Records, nil
+// write runs one auto-committed, retried Cypher write statement.
+func (r *neo4jRepository) write(ctx context.Context, cypher string, params map[string]any) error {
+	_, err := neo4j.ExecuteQuery(ctx, r.driver, cypher, params, neo4j.EagerResultTransformer,
+		neo4j.ExecuteQueryWithDatabase(r.database), neo4j.ExecuteQueryWithWritersRouting())
+	return err
 }
 
 // DeletePattern removes a Pattern node and all its relationships from the
@@ -97,7 +86,7 @@ func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID
 	ctx, done := r.instrument(ctx, "DeletePattern")
 	defer func() { done(err) }()
 
-	_, err = r.query(ctx, true,
+	err = r.write(ctx,
 		// Collect the pattern's concepts before detaching it, then drop only
 		// those no other pattern mentions. This replaces a graph-wide orphan
 		// sweep with work proportional to one pattern.
@@ -118,7 +107,7 @@ func (r *neo4jRepository) DeletePattern(ctx context.Context, patternID uuid.UUID
 }
 
 const conceptsCypher = `MATCH (c:Concept)-[:MENTIONED_IN]->(p:Pattern {id: $patternId})
-	 RETURN c.name AS name, c.type AS type
+	 RETURN c.name AS name
 	 ORDER BY c.name`
 
 const relatedCypher = `MATCH (p1:Pattern {id: $patternId})-[r:RELATED_TO]-(p2:Pattern)
@@ -197,38 +186,7 @@ func toConcept(rec *neo4j.Record) (Concept, error) {
 	if err != nil {
 		return Concept{}, err
 	}
-	typ, _, err := neo4j.GetRecordValue[string](rec, "type")
-	if err != nil {
-		return Concept{}, err
-	}
-	return Concept{Name: name, Type: typ}, nil
-}
-
-// FindRelatedPatterns finds patterns related to the given pattern using pre-computed RELATED_TO edges.
-// Results include similarity scores and shared concept names.
-func (r *neo4jRepository) FindRelatedPatterns(ctx context.Context, patternID uuid.UUID, limit int) (_ []RelatedPattern, err error) {
-	if patternID == uuid.Nil {
-		return nil, errNilPatternID
-	}
-	ctx, done := r.instrument(ctx, "FindRelatedPatterns")
-	defer func() { done(err) }()
-
-	records, err := r.query(ctx, false, relatedCypher,
-		map[string]any{"patternId": patternID.String(), "limit": limit},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("finding related patterns for %s: %w", patternID, err)
-	}
-
-	patterns := make([]RelatedPattern, 0, len(records))
-	for _, rec := range records {
-		rp, err := toRelatedPattern(rec)
-		if err != nil {
-			return nil, fmt.Errorf("finding related patterns for %s: %w", patternID, err)
-		}
-		patterns = append(patterns, rp)
-	}
-	return patterns, nil
+	return Concept{Name: name}, nil
 }
 
 func toRelatedPattern(rec *neo4j.Record) (RelatedPattern, error) {
