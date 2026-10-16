@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/pgvector/pgvector-go"
@@ -50,7 +49,8 @@ func (r *pgxRepository) WithTx(db repository.DBTX) Repository {
 // CreateBatch inserts chunks in one round trip. A single INSERT ... SELECT
 // FROM unnest is atomic on its own, so it is safe on a pool or inside a
 // caller-owned transaction alike. IDs are generated here when missing; the
-// database fills enrichment_status, created_at and updated_at.
+// database fills enrichment_status, created_at and updated_at, which are not
+// read back because callers only need the IDs.
 func (r *pgxRepository) CreateBatch(ctx context.Context, chunks []*Chunk) error {
 	if len(chunks) == 0 {
 		return nil
@@ -60,7 +60,6 @@ func (r *pgxRepository) CreateBatch(ctx context.Context, chunks []*Chunk) error 
 	titles := make([]string, len(chunks))
 	indexes := make([]int32, len(chunks))
 	contents := make([]string, len(chunks))
-	byID := make(map[uuid.UUID]*Chunk, len(chunks))
 	for i, c := range chunks {
 		if c.ID == uuid.Nil {
 			c.ID = uuid.New()
@@ -69,7 +68,6 @@ func (r *pgxRepository) CreateBatch(ctx context.Context, chunks []*Chunk) error 
 		titles[i] = c.SectionTitle
 		indexes[i] = int32(c.ChunkIndex) // #nosec G115 -- chunk index is bounded by section count
 		contents[i] = c.Content
-		byID[c.ID] = c
 	}
 
 	// All chunks in a batch belong to one pattern (the only caller splits one
@@ -79,29 +77,9 @@ func (r *pgxRepository) CreateBatch(ctx context.Context, chunks []*Chunk) error 
 		SELECT u.id, $1, u.section_title, u.chunk_index, u.content
 		FROM unnest($2::uuid[], $3::text[], $4::int[], $5::text[])
 		     AS u(id, section_title, chunk_index, content)
-		RETURNING id, enrichment_status, created_at, updated_at
 	`
 
-	rows, err := r.db.Query(ctx, query, chunks[0].PatternID, ids, titles, indexes, contents)
-	if err != nil {
-		return fmt.Errorf("creating chunk batch: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id uuid.UUID
-		var status string
-		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&id, &status, &createdAt, &updatedAt); err != nil {
-			return fmt.Errorf("creating chunk batch: scanning row: %w", err)
-		}
-		if c, ok := byID[id]; ok {
-			c.EnrichmentStatus = status
-			c.CreatedAt = createdAt
-			c.UpdatedAt = updatedAt
-		}
-	}
-	if err := rows.Err(); err != nil {
+	if _, err := r.db.Exec(ctx, query, chunks[0].PatternID, ids, titles, indexes, contents); err != nil {
 		return fmt.Errorf("creating chunk batch: %w", err)
 	}
 
