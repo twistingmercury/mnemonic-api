@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -411,9 +410,10 @@ func TestIntegration_Constraints(t *testing.T) {
 	repo := pattern.NewRepository(pool)
 	ctx := context.Background()
 
-	t.Run("accepts content up to 10KB", func(t *testing.T) {
-		// Create content just under 10KB
-		largeContent := make([]byte, 10*1024)
+	t.Run("accepts content over 10KB", func(t *testing.T) {
+		// Migration 000005 dropped the old 10KB CHECK; the API handler caps
+		// content at 100,000 bytes, so the database must store that much.
+		largeContent := make([]byte, 100_000)
 		for i := range largeContent {
 			largeContent[i] = 'a' + byte(i%26)
 		}
@@ -425,33 +425,11 @@ func TestIntegration_Constraints(t *testing.T) {
 		}
 
 		err := repo.Create(ctx, p)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
-		// Verify it was stored correctly
 		retrieved, err := repo.Get(ctx, p.ID)
 		require.NoError(t, err)
 		assert.Equal(t, len(largeContent), len(retrieved.Content))
-	})
-
-	t.Run("rejects content over 10KB", func(t *testing.T) {
-		// Create content over 10KB
-		oversizedContent := make([]byte, 10*1024+1)
-		for i := range oversizedContent {
-			oversizedContent[i] = 'a' + byte(i%26)
-		}
-
-		p := &pattern.Pattern{
-			Name:    testPatternPrefix + "oversized-content",
-			Content: string(oversizedContent),
-			Tags:    []string{},
-		}
-
-		err := repo.Create(ctx, p)
-		require.Error(t, err)
-
-		var pgErr *pgconn.PgError
-		assert.True(t, errors.As(err, &pgErr))
-		assert.Equal(t, "23514", pgErr.Code, "expected check constraint violation")
 	})
 
 	t.Run("accepts nil tags by converting to empty array", func(t *testing.T) {

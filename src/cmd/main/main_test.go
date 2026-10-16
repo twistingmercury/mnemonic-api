@@ -56,7 +56,7 @@ func healthServer(t *testing.T, status int) (string, *atomic.Int32) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		assert.Equal(t, config.DefaultHealthPath, r.URL.Path)
+		assert.Equal(t, "/health", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write(body)

@@ -56,22 +56,16 @@ func TestDefaultValues(t *testing.T) {
 	// OpenAI defaults
 	assert.Equal(t, config.DefaultOpenAIEmbeddingModel, cfg.OpenAI.EmbeddingModel)
 	assert.Equal(t, config.DefaultOpenAIEmbeddingDimensions, cfg.OpenAI.EmbeddingDimensions)
-	assert.Equal(t, config.DefaultOpenAIExtractionModel, cfg.OpenAI.ExtractionModel)
-	assert.Equal(t, config.DefaultOpenAIMaxRequestsPerMinute, cfg.OpenAI.MaxRequestsPerMinute)
 	assert.Equal(t, config.DefaultOpenAIRetryAttempts, cfg.OpenAI.RetryAttempts)
 	assert.Equal(t, config.DefaultOpenAIRetryDelay, cfg.OpenAI.RetryDelay)
 
 	// Logging defaults
 	assert.Equal(t, config.DefaultLoggingLevel, cfg.Logging.Level)
-	assert.Equal(t, config.DefaultLoggingFormat, cfg.Logging.Format)
-	assert.Equal(t, config.DefaultLoggingIncludeCaller, cfg.Logging.IncludeCaller)
 
 	// Observability defaults
 	assert.Equal(t, config.DefaultMetricsEnabled, cfg.Observability.Metrics.Enabled)
 	assert.Equal(t, config.DefaultMetricsPath, cfg.Observability.Metrics.Path)
 	assert.Equal(t, config.DefaultMetricsPort, cfg.Observability.Metrics.Port)
-	assert.Equal(t, config.DefaultHealthEnabled, cfg.Observability.Health.Enabled)
-	assert.Equal(t, config.DefaultHealthPath, cfg.Observability.Health.Path)
 	assert.Equal(t, config.DefaultTracingEnabled, cfg.Observability.Tracing.Enabled)
 	assert.Equal(t, config.DefaultTracingSampleRate, cfg.Observability.Tracing.SampleRate)
 	assert.Equal(t, config.DefaultTracingOTLPInsecure, cfg.Observability.Tracing.OTLPInsecure)
@@ -115,8 +109,6 @@ openai:
 
 logging:
   level: debug
-  format: text
-  include_caller: true
 
 vocabulary:
   languages:
@@ -158,8 +150,6 @@ vocabulary:
 	assert.Equal(t, 1536, cfg.OpenAI.EmbeddingDimensions)
 
 	assert.Equal(t, "debug", cfg.Logging.Level)
-	assert.Equal(t, "text", cfg.Logging.Format)
-	assert.True(t, cfg.Logging.IncludeCaller)
 }
 
 // TestEnvironmentVariableOverrides verifies that environment variables override file values.
@@ -213,7 +203,6 @@ vocabulary:
 
 	// Verify file values are retained when no env override
 	assert.Equal(t, "pghost", cfg.Database.Postgres.Host)
-	assert.Equal(t, "json", cfg.Logging.Format)
 }
 
 // TestEnvironmentVariableNaming verifies correct environment variable naming conventions.
@@ -497,13 +486,6 @@ func TestValidation_OpenAIConfig(t *testing.T) {
 			expectError: "openai.embedding_dimensions",
 		},
 		{
-			name: "invalid max_requests_per_minute",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.OpenAI.MaxRequestsPerMinute = 0
-			},
-			expectError: "openai.max_requests_per_minute",
-		},
-		{
 			name: "negative retry_attempts",
 			modify: func(cfg *config.MnemonicConfig) {
 				cfg.OpenAI.RetryAttempts = -1
@@ -544,13 +526,6 @@ func TestValidation_LoggingConfig(t *testing.T) {
 			},
 			expectError: "logging.level",
 		},
-		{
-			name: "invalid log format",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Logging.Format = "invalid"
-			},
-			expectError: "logging.format",
-		},
 	}
 
 	for _, tt := range tests {
@@ -580,22 +555,6 @@ func TestValidation_LoggingLevels(t *testing.T) {
 	}
 }
 
-// TestValidation_LoggingFormats tests all valid log formats.
-func TestValidation_LoggingFormats(t *testing.T) {
-	validFormats := []string{"json", "text", "JSON", "TEXT"}
-
-	for _, format := range validFormats {
-		t.Run(format, func(t *testing.T) {
-			cfg := validConfig()
-			cfg.Logging.Format = format
-			errs := cfg.Validate()
-			for _, err := range errs {
-				assert.NotEqual(t, "logging.format", err.Field)
-			}
-		})
-	}
-}
-
 // TestValidation_ObservabilityConfig tests observability configuration validation.
 func TestValidation_ObservabilityConfig(t *testing.T) {
 	tests := []struct {
@@ -618,14 +577,6 @@ func TestValidation_ObservabilityConfig(t *testing.T) {
 				cfg.Observability.Metrics.Path = ""
 			},
 			expectError: "observability.metrics.path",
-		},
-		{
-			name: "health enabled with empty path",
-			modify: func(cfg *config.MnemonicConfig) {
-				cfg.Observability.Health.Enabled = true
-				cfg.Observability.Health.Path = ""
-			},
-			expectError: "observability.health.path",
 		},
 		{
 			name: "tracing enabled with empty endpoint",
@@ -1316,12 +1267,12 @@ func TestBooleanEnvironmentVariables(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateConfigSources(t)
-			// Use logging.include_caller which has no validation dependencies
-			t.Setenv("MNEMONIC_LOGGING_INCLUDE_CALLER", tt.value)
+			// metrics.enabled validates cleanly either way with the default port and path
+			t.Setenv("MNEMONIC_OBSERVABILITY_METRICS_ENABLED", tt.value)
 
 			cfg, err := config.LoadWithFlags(nil)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, cfg.Logging.IncludeCaller)
+			assert.Equal(t, tt.expected, cfg.Observability.Metrics.Enabled)
 		})
 	}
 }
@@ -1515,28 +1466,20 @@ func validConfig() *config.MnemonicConfig {
 			},
 		},
 		OpenAI: config.OpenAIConfig{
-			APIKey:               "",
-			EmbeddingModel:       "text-embedding-3-small",
-			EmbeddingDimensions:  1536,
-			ExtractionModel:      "gpt-4o-mini",
-			MaxRequestsPerMinute: 500,
-			RetryAttempts:        3,
-			RetryDelay:           1 * time.Second,
+			APIKey:              "",
+			EmbeddingModel:      "text-embedding-3-small",
+			EmbeddingDimensions: 1536,
+			RetryAttempts:       3,
+			RetryDelay:          1 * time.Second,
 		},
 		Logging: config.LoggingConfig{
-			Level:         "info",
-			Format:        "json",
-			IncludeCaller: false,
+			Level: "info",
 		},
 		Observability: config.ObservabilityConfig{
 			Metrics: config.MetricsConfig{
 				Enabled: true,
 				Path:    "/metrics",
 				Port:    9090,
-			},
-			Health: config.HealthConfig{
-				Enabled: true,
-				Path:    "/health",
 			},
 			Tracing: config.TracingConfig{
 				Enabled:      false,

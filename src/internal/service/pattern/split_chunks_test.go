@@ -38,13 +38,31 @@ func Test_splitIntoChunks(t *testing.T) {
 			wantTitles: []string{"Foo"},
 		},
 		{
-			name:    "no decorators",
-			input:   "## Overview\ntext",
-			wantLen: 0,
+			name:       "no decorators becomes one chunk titled by first heading",
+			input:      "## Overview\ntext",
+			wantLen:    1,
+			wantTitles: []string{"Overview"},
+		},
+		{
+			name:       "no decorators and no heading",
+			input:      "plain text only",
+			wantLen:    1,
+			wantTitles: []string{"Content"},
+		},
+		{
+			name:       "only empty decorated sections falls back to whole content",
+			input:      "# Title\n[//]: pattern\n## Empty\n",
+			wantLen:    1,
+			wantTitles: []string{"Title"},
 		},
 		{
 			name:    "empty string",
 			input:   "",
+			wantLen: 0,
+		},
+		{
+			name:    "whitespace only",
+			input:   " \n\t\n",
 			wantLen: 0,
 		},
 		{

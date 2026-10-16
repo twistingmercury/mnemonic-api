@@ -69,19 +69,16 @@ type Neo4jConfig struct {
 
 // OpenAIConfig contains OpenAI API settings.
 type OpenAIConfig struct {
-	APIKey               string        `mapstructure:"api_key"` // #nosec G117 -- credentials loaded from config/env, not serialized
-	BaseURL              string        `mapstructure:"base_url"`
-	EmbeddingModel       string        `mapstructure:"embedding_model"`
-	EmbeddingDimensions  int           `mapstructure:"embedding_dimensions"`
-	ExtractionModel      string        `mapstructure:"extraction_model"`
-	MaxRequestsPerMinute int           `mapstructure:"max_requests_per_minute"`
-	RetryAttempts        int           `mapstructure:"retry_attempts"`
-	RetryDelay           time.Duration `mapstructure:"retry_delay"`
+	APIKey              string        `mapstructure:"api_key"` // #nosec G117 -- credentials loaded from config/env, not serialized
+	BaseURL             string        `mapstructure:"base_url"`
+	EmbeddingModel      string        `mapstructure:"embedding_model"`
+	EmbeddingDimensions int           `mapstructure:"embedding_dimensions"`
+	RetryAttempts       int           `mapstructure:"retry_attempts"`
+	RetryDelay          time.Duration `mapstructure:"retry_delay"`
 }
 
 // QueueConfig contains message queue settings.
 type QueueConfig struct {
-	Provider string         `mapstructure:"provider"`
 	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
 }
 
@@ -98,15 +95,12 @@ type RabbitMQConfig struct {
 
 // LoggingConfig contains logging settings.
 type LoggingConfig struct {
-	Level         string `mapstructure:"level"`
-	Format        string `mapstructure:"format"`
-	IncludeCaller bool   `mapstructure:"include_caller"`
+	Level string `mapstructure:"level"`
 }
 
 // ObservabilityConfig contains observability settings.
 type ObservabilityConfig struct {
 	Metrics MetricsConfig `mapstructure:"metrics"`
-	Health  HealthConfig  `mapstructure:"health"`
 	Tracing TracingConfig `mapstructure:"tracing"`
 }
 
@@ -115,12 +109,6 @@ type MetricsConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Path    string `mapstructure:"path"`
 	Port    int    `mapstructure:"port"`
-}
-
-// HealthConfig contains health check settings.
-type HealthConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Path    string `mapstructure:"path"`
 }
 
 // TracingConfig contains distributed tracing settings.
@@ -255,15 +243,11 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("openai.base_url", DefaultOpenAIBaseURL)
 	v.SetDefault("openai.embedding_model", DefaultOpenAIEmbeddingModel)
 	v.SetDefault("openai.embedding_dimensions", DefaultOpenAIEmbeddingDimensions)
-	v.SetDefault("openai.extraction_model", DefaultOpenAIExtractionModel)
-	v.SetDefault("openai.max_requests_per_minute", DefaultOpenAIMaxRequestsPerMinute)
 	v.SetDefault("openai.retry_attempts", DefaultOpenAIRetryAttempts)
 	v.SetDefault("openai.retry_delay", DefaultOpenAIRetryDelay)
 
 	// Logging defaults
 	v.SetDefault("logging.level", DefaultLoggingLevel)
-	v.SetDefault("logging.format", DefaultLoggingFormat)
-	v.SetDefault("logging.include_caller", DefaultLoggingIncludeCaller)
 
 	// Vocabulary defaults
 	v.SetDefault("vocabulary.languages", DefaultVocabularyLanguages())
@@ -273,15 +257,12 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("observability.metrics.enabled", DefaultMetricsEnabled)
 	v.SetDefault("observability.metrics.path", DefaultMetricsPath)
 	v.SetDefault("observability.metrics.port", DefaultMetricsPort)
-	v.SetDefault("observability.health.enabled", DefaultHealthEnabled)
-	v.SetDefault("observability.health.path", DefaultHealthPath)
 	v.SetDefault("observability.tracing.enabled", DefaultTracingEnabled)
 	v.SetDefault("observability.tracing.endpoint", "")
 	v.SetDefault("observability.tracing.sample_rate", DefaultTracingSampleRate)
 	v.SetDefault("observability.tracing.otlp_insecure", DefaultTracingOTLPInsecure)
 
 	// Queue defaults
-	v.SetDefault("queue.provider", DefaultQueueProvider)
 	v.SetDefault("queue.rabbitmq.host", DefaultRabbitMQHost)
 	v.SetDefault("queue.rabbitmq.port", DefaultRabbitMQPort)
 	v.SetDefault("queue.rabbitmq.user", DefaultRabbitMQUser)
@@ -487,13 +468,6 @@ func (c *OpenAIConfig) validate() ValidationErrors {
 		})
 	}
 
-	if c.MaxRequestsPerMinute < 1 {
-		errs = append(errs, ValidationError{
-			Field:   "openai.max_requests_per_minute",
-			Message: "must be at least 1",
-		})
-	}
-
 	if c.RetryAttempts < 0 {
 		errs = append(errs, ValidationError{
 			Field:   "openai.retry_attempts",
@@ -538,18 +512,6 @@ func (c *LoggingConfig) validate() ValidationErrors {
 		})
 	}
 
-	validFormats := map[string]bool{
-		"json": true,
-		"text": true,
-	}
-
-	if !validFormats[strings.ToLower(c.Format)] {
-		errs = append(errs, ValidationError{
-			Field:   "logging.format",
-			Message: fmt.Sprintf("must be one of: json, text; got %q", c.Format),
-		})
-	}
-
 	return errs
 }
 
@@ -569,16 +531,6 @@ func (c *ObservabilityConfig) validate() ValidationErrors {
 			errs = append(errs, ValidationError{
 				Field:   "observability.metrics.path",
 				Message: "required when metrics are enabled",
-			})
-		}
-	}
-
-	// Health validation
-	if c.Health.Enabled {
-		if c.Health.Path == "" {
-			errs = append(errs, ValidationError{
-				Field:   "observability.health.path",
-				Message: "required when health checks are enabled",
 			})
 		}
 	}

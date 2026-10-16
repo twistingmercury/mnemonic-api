@@ -104,13 +104,13 @@ func TestHealthCheck_AllHealthyReturns200(t *testing.T) {
 		t.Fatalf("expected status 'OK', got %q\nbody: %v", status, body)
 	}
 
-	// Verify name field is "mnemonic"
+	// Verify name field is "mnemonic-api"
 	name, ok := body["name"].(string)
 	if !ok {
 		t.Fatalf("expected 'name' field to be a string, got %T", body["name"])
 	}
-	if name != "mnemonic" {
-		t.Fatalf("expected name 'mnemonic', got %q", name)
+	if name != "mnemonic-api" {
+		t.Fatalf("expected name 'mnemonic-api', got %q", name)
 	}
 }
 
@@ -224,8 +224,8 @@ func TestVersion_ReturnsOKWithVersionInfo(t *testing.T) {
 
 	ver := helpers.ParseJSON[helpers.VersionResponse](t, resp)
 
-	if ver.Service != "mnemonic" {
-		t.Fatalf("expected service 'mnemonic', got %q", ver.Service)
+	if ver.Service != "mnemonic-api" {
+		t.Fatalf("expected service 'mnemonic-api', got %q", ver.Service)
 	}
 
 	if ver.Version == "" {

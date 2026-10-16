@@ -35,25 +35,20 @@ const (
 
 // Default values for OpenAI configuration
 const (
-	DefaultOpenAIBaseURL              = "https://api.openai.com/v1"
-	DefaultOpenAIEmbeddingModel       = "text-embedding-3-large"
-	DefaultOpenAIEmbeddingDimensions  = 2000
-	DefaultOpenAIExtractionModel      = "gpt-4o-mini"
-	DefaultOpenAIMaxRequestsPerMinute = 500
-	DefaultOpenAIRetryAttempts        = 3
-	DefaultOpenAIRetryDelay           = 1 * time.Second
+	DefaultOpenAIBaseURL             = "https://api.openai.com/v1"
+	DefaultOpenAIEmbeddingModel      = "text-embedding-3-large"
+	DefaultOpenAIEmbeddingDimensions = 2000
+	DefaultOpenAIRetryAttempts       = 3
+	DefaultOpenAIRetryDelay          = 1 * time.Second
 )
 
 // Default values for logging configuration
 const (
-	DefaultLoggingLevel         = "info"
-	DefaultLoggingFormat        = "json"
-	DefaultLoggingIncludeCaller = false
+	DefaultLoggingLevel = "info"
 )
 
 // Default values for queue configuration
 const (
-	DefaultQueueProvider          = "rabbitmq"
 	DefaultRabbitMQHost           = "localhost"
 	DefaultRabbitMQPort           = 5672
 	DefaultRabbitMQUser           = "guest"
@@ -67,8 +62,6 @@ const (
 	DefaultMetricsEnabled      = true
 	DefaultMetricsPath         = "/metrics"
 	DefaultMetricsPort         = 9090
-	DefaultHealthEnabled       = true
-	DefaultHealthPath          = "/health"
 	DefaultTracingEnabled      = false
 	DefaultTracingSampleRate   = 0.1
 	DefaultTracingOTLPInsecure = true

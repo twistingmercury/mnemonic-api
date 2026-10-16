@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The service reports its own name, `mnemonic-api`, as the OpenTelemetry `service.name`, the `/health` `name`, the `/version` `service` and the HTTP tracing middleware name. All three services used to report `mnemonic`, so their traces and metrics could not be told apart.
+- Content with no `[//]: pattern` section is stored as a single chunk titled by its first heading (or `Content`), so it gets an enrichment job. Such patterns used to get no chunks and stay `pending` forever.
+
+### Removed
+
+- Config keys that were validated but never used: `logging.format`, `logging.include_caller`, `observability.health.enabled`, `observability.health.path`, `openai.extraction_model`, `openai.max_requests_per_minute` and `queue.provider`. Viper ignores them if they are still set.
+- The stale `internal/repository/tests/run-*-integration-tests.sh` scripts, which pointed at a compose file that no longer exists. `make tests-integration` replaces them.
+
+### Fixed
+
+- The pattern repository integration test expected a 10KB content CHECK that migration 000005 in mnemonic-dbs dropped. It now checks that 100,000 bytes, the API's limit, are stored.
+
 ## [v0.4.0] - 2026-10-15
 
 ### Added
