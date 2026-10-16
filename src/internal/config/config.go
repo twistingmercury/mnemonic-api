@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -331,6 +332,11 @@ func (c *ServerConfig) validate() []error {
 	return errs
 }
 
+// neo4jSchemes are the URI schemes the Neo4j driver accepts: direct (bolt)
+// and routed (neo4j), each plain, TLS-verified (+s) or TLS with a self-signed
+// certificate (+ssc).
+var neo4jSchemes = []string{"bolt", "bolt+s", "bolt+ssc", "neo4j", "neo4j+s", "neo4j+ssc"}
+
 func (c *DatabaseConfig) validate() []error {
 	var errs []error
 
@@ -366,8 +372,8 @@ func (c *DatabaseConfig) validate() []error {
 	// Neo4j validation
 	if c.Neo4j.URI == "" {
 		errs = append(errs, fieldError("database.neo4j.uri", "required"))
-	} else if !strings.HasPrefix(c.Neo4j.URI, "bolt://") && !strings.HasPrefix(c.Neo4j.URI, "neo4j://") {
-		errs = append(errs, fieldError("database.neo4j.uri", fmt.Sprintf("must start with bolt:// or neo4j://, got %q", c.Neo4j.URI)))
+	} else if scheme, _, ok := strings.Cut(c.Neo4j.URI, "://"); !ok || !slices.Contains(neo4jSchemes, scheme) {
+		errs = append(errs, fieldError("database.neo4j.uri", fmt.Sprintf("must start with bolt://, bolt+s://, bolt+ssc://, neo4j://, neo4j+s:// or neo4j+ssc://, got %q", c.Neo4j.URI)))
 	}
 
 	if c.Neo4j.MaxConnectionPoolSize < 1 {

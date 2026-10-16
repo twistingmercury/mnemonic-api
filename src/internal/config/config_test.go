@@ -417,6 +417,13 @@ func TestValidation_DatabaseConfig(t *testing.T) {
 			expectError: "database.neo4j.uri",
 		},
 		{
+			name: "invalid neo4j uri prefix - unknown TLS suffix",
+			modify: func(cfg *config.MnemonicConfig) {
+				cfg.Database.Neo4j.URI = "bolt+tls://localhost:7687"
+			},
+			expectError: "database.neo4j.uri",
+		},
+		{
 			name: "invalid neo4j uri prefix - no scheme",
 			modify: func(cfg *config.MnemonicConfig) {
 				cfg.Database.Neo4j.URI = "localhost:7687"
@@ -457,6 +464,10 @@ func TestValidation_Neo4jValidURIs(t *testing.T) {
 		"bolt://neo4j-server:7687",
 		"neo4j://localhost:7687",
 		"neo4j://neo4j-cluster:7687",
+		"bolt+s://secure-host:7687",
+		"bolt+ssc://self-signed-host:7687",
+		"neo4j+s://xxxx.databases.neo4j.io",
+		"neo4j+ssc://self-signed-cluster:7687",
 	}
 
 	for _, uri := range validURIs {
