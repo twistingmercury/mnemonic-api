@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -119,29 +120,9 @@ type TracingConfig struct {
 	OTLPInsecure bool    `mapstructure:"otlp_insecure"`
 }
 
-// ValidationError represents a configuration validation error.
-type ValidationError struct {
-	Field   string
-	Message string
-}
-
-func (e ValidationError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Field, e.Message)
-}
-
-// ValidationErrors is a collection of validation errors.
-type ValidationErrors []ValidationError
-
-func (e ValidationErrors) Error() string {
-	if len(e) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("configuration validation failed:\n")
-	for _, err := range e {
-		fmt.Fprintf(&sb, "  - %s\n", err.Error())
-	}
-	return sb.String()
+// fieldError reports an invalid configuration key.
+func fieldError(field, message string) error {
+	return errors.New(field + ": " + message)
 }
 
 // LoadWithFlags loads, unmarshals and validates the configuration that
@@ -202,7 +183,7 @@ func LoadFromViper(v *viper.Viper) (*MnemonicConfig, error) {
 	}
 
 	if errs := cfg.Validate(); len(errs) > 0 {
-		return nil, errs
+		return nil, fmt.Errorf("configuration validation failed:\n%w", errors.Join(errs...))
 	}
 
 	return cfg, nil
@@ -299,9 +280,9 @@ func findConfigFile(flags *pflag.FlagSet) string {
 	return ""
 }
 
-// Validate validates the configuration and returns any validation errors.
-func (c *MnemonicConfig) Validate() ValidationErrors {
-	var errs ValidationErrors
+// Validate validates the configuration and returns one error per invalid key.
+func (c *MnemonicConfig) Validate() []error {
+	var errs []error
 
 	// Server validation
 	errs = append(errs, c.Server.validate()...)
@@ -323,180 +304,117 @@ func (c *MnemonicConfig) Validate() ValidationErrors {
 
 	// Cross-configuration validation
 	if c.Observability.Metrics.Enabled && c.Server.Port == c.Observability.Metrics.Port {
-		errs = append(errs, ValidationError{
-			Field:   "observability.metrics.port",
-			Message: fmt.Sprintf("must be different from server.port (%d) to avoid port conflict", c.Server.Port),
-		})
+		errs = append(errs, fieldError("observability.metrics.port", fmt.Sprintf("must be different from server.port (%d) to avoid port conflict", c.Server.Port)))
 	}
 	return errs
 }
 
-func (c *ServerConfig) validate() ValidationErrors {
-	var errs ValidationErrors
+func (c *ServerConfig) validate() []error {
+	var errs []error
 
 	if c.Port < 1 || c.Port > 65535 {
-		errs = append(errs, ValidationError{
-			Field:   "server.port",
-			Message: fmt.Sprintf("must be between 1 and 65535, got %d", c.Port),
-		})
+		errs = append(errs, fieldError("server.port", fmt.Sprintf("must be between 1 and 65535, got %d", c.Port)))
 	}
 
 	if c.ReadTimeout <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "server.read_timeout",
-			Message: "must be a positive duration",
-		})
+		errs = append(errs, fieldError("server.read_timeout", "must be a positive duration"))
 	}
 
 	if c.WriteTimeout <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "server.write_timeout",
-			Message: "must be a positive duration",
-		})
+		errs = append(errs, fieldError("server.write_timeout", "must be a positive duration"))
 	}
 
 	if c.IdleTimeout <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "server.idle_timeout",
-			Message: "must be a positive duration",
-		})
+		errs = append(errs, fieldError("server.idle_timeout", "must be a positive duration"))
 	}
 
 	if c.ShutdownTimeout <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "server.shutdown_timeout",
-			Message: "must be a positive duration",
-		})
+		errs = append(errs, fieldError("server.shutdown_timeout", "must be a positive duration"))
 	}
 
 	return errs
 }
 
-func (c *DatabaseConfig) validate() ValidationErrors {
-	var errs ValidationErrors
+func (c *DatabaseConfig) validate() []error {
+	var errs []error
 
 	// PostgreSQL validation
 	if c.Postgres.Host == "" {
-		errs = append(errs, ValidationError{
-			Field:   "database.postgres.host",
-			Message: "required",
-		})
+		errs = append(errs, fieldError("database.postgres.host", "required"))
 	}
 
 	if c.Postgres.Database == "" {
-		errs = append(errs, ValidationError{
-			Field:   "database.postgres.database",
-			Message: "required",
-		})
+		errs = append(errs, fieldError("database.postgres.database", "required"))
 	}
 
 	if c.Postgres.Port < 1 || c.Postgres.Port > 65535 {
-		errs = append(errs, ValidationError{
-			Field:   "database.postgres.port",
-			Message: fmt.Sprintf("must be between 1 and 65535, got %d", c.Postgres.Port),
-		})
+		errs = append(errs, fieldError("database.postgres.port", fmt.Sprintf("must be between 1 and 65535, got %d", c.Postgres.Port)))
 	}
 
 	if c.Postgres.MaxOpenConns < 1 {
-		errs = append(errs, ValidationError{
-			Field:   "database.postgres.max_open_conns",
-			Message: "must be at least 1",
-		})
+		errs = append(errs, fieldError("database.postgres.max_open_conns", "must be at least 1"))
 	}
 
 	if c.Postgres.MaxIdleConns < 0 {
-		errs = append(errs, ValidationError{
-			Field:   "database.postgres.max_idle_conns",
-			Message: "must be non-negative",
-		})
+		errs = append(errs, fieldError("database.postgres.max_idle_conns", "must be non-negative"))
 	}
 
 	if c.Postgres.MaxIdleConns > c.Postgres.MaxOpenConns {
-		errs = append(errs, ValidationError{
-			Field:   "database.postgres.max_idle_conns",
-			Message: fmt.Sprintf("must be less than or equal to max_open_conns (%d), got %d", c.Postgres.MaxOpenConns, c.Postgres.MaxIdleConns),
-		})
+		errs = append(errs, fieldError("database.postgres.max_idle_conns", fmt.Sprintf("must be less than or equal to max_open_conns (%d), got %d", c.Postgres.MaxOpenConns, c.Postgres.MaxIdleConns)))
 	}
 
 	if c.Postgres.ConnMaxLifetime < 0 {
-		errs = append(errs, ValidationError{
-			Field:   "database.postgres.conn_max_lifetime",
-			Message: "must be non-negative",
-		})
+		errs = append(errs, fieldError("database.postgres.conn_max_lifetime", "must be non-negative"))
 	}
 
 	// Neo4j validation
 	if c.Neo4j.URI == "" {
-		errs = append(errs, ValidationError{
-			Field:   "database.neo4j.uri",
-			Message: "required",
-		})
+		errs = append(errs, fieldError("database.neo4j.uri", "required"))
 	} else if !strings.HasPrefix(c.Neo4j.URI, "bolt://") && !strings.HasPrefix(c.Neo4j.URI, "neo4j://") {
-		errs = append(errs, ValidationError{
-			Field:   "database.neo4j.uri",
-			Message: fmt.Sprintf("must start with bolt:// or neo4j://, got %q", c.Neo4j.URI),
-		})
+		errs = append(errs, fieldError("database.neo4j.uri", fmt.Sprintf("must start with bolt:// or neo4j://, got %q", c.Neo4j.URI)))
 	}
 
 	if c.Neo4j.MaxConnectionPoolSize < 1 {
-		errs = append(errs, ValidationError{
-			Field:   "database.neo4j.max_connection_pool_size",
-			Message: "must be at least 1",
-		})
+		errs = append(errs, fieldError("database.neo4j.max_connection_pool_size", "must be at least 1"))
 	}
 
 	if c.Neo4j.ConnectionAcquisitionTimeout <= 0 {
-		errs = append(errs, ValidationError{
-			Field:   "database.neo4j.connection_acquisition_timeout",
-			Message: "must be a positive duration",
-		})
+		errs = append(errs, fieldError("database.neo4j.connection_acquisition_timeout", "must be a positive duration"))
 	}
 
 	return errs
 }
 
-func (c *OpenAIConfig) validate() ValidationErrors {
-	var errs ValidationErrors
+func (c *OpenAIConfig) validate() []error {
+	var errs []error
 
 	// API key is required for production, but we allow empty for development/testing
 	// The actual check will happen at runtime when trying to use the API
 
 	if c.EmbeddingDimensions < 1 {
-		errs = append(errs, ValidationError{
-			Field:   "openai.embedding_dimensions",
-			Message: "must be at least 1",
-		})
+		errs = append(errs, fieldError("openai.embedding_dimensions", "must be at least 1"))
 	}
 
 	if c.RetryAttempts < 0 {
-		errs = append(errs, ValidationError{
-			Field:   "openai.retry_attempts",
-			Message: "must be non-negative",
-		})
+		errs = append(errs, fieldError("openai.retry_attempts", "must be non-negative"))
 	}
 
 	if c.RetryDelay < 0 {
-		errs = append(errs, ValidationError{
-			Field:   "openai.retry_delay",
-			Message: "must be non-negative",
-		})
+		errs = append(errs, fieldError("openai.retry_delay", "must be non-negative"))
 	}
 
 	if c.BaseURL != "" {
 		u, err := url.Parse(c.BaseURL)
 		if err != nil || u.Scheme == "" || u.Host == "" {
-			errs = append(errs, ValidationError{
-				Field:   "openai.base_url",
-				Message: fmt.Sprintf("must be an absolute URL with scheme and host, got %q", c.BaseURL),
-			})
+			errs = append(errs, fieldError("openai.base_url", fmt.Sprintf("must be an absolute URL with scheme and host, got %q", c.BaseURL)))
 		}
 	}
 
 	return errs
 }
 
-func (c *LoggingConfig) validate() ValidationErrors {
-	var errs ValidationErrors
+func (c *LoggingConfig) validate() []error {
+	var errs []error
 
 	validLevels := map[string]bool{
 		"debug": true,
@@ -506,70 +424,49 @@ func (c *LoggingConfig) validate() ValidationErrors {
 	}
 
 	if !validLevels[strings.ToLower(c.Level)] {
-		errs = append(errs, ValidationError{
-			Field:   "logging.level",
-			Message: fmt.Sprintf("must be one of: debug, info, warn, error; got %q", c.Level),
-		})
+		errs = append(errs, fieldError("logging.level", fmt.Sprintf("must be one of: debug, info, warn, error; got %q", c.Level)))
 	}
 
 	return errs
 }
 
-func (c *ObservabilityConfig) validate() ValidationErrors {
-	var errs ValidationErrors
+func (c *ObservabilityConfig) validate() []error {
+	var errs []error
 
 	// Metrics validation
 	if c.Metrics.Enabled {
 		if c.Metrics.Port < 1 || c.Metrics.Port > 65535 {
-			errs = append(errs, ValidationError{
-				Field:   "observability.metrics.port",
-				Message: fmt.Sprintf("must be between 1 and 65535, got %d", c.Metrics.Port),
-			})
+			errs = append(errs, fieldError("observability.metrics.port", fmt.Sprintf("must be between 1 and 65535, got %d", c.Metrics.Port)))
 		}
 
 		if c.Metrics.Path == "" {
-			errs = append(errs, ValidationError{
-				Field:   "observability.metrics.path",
-				Message: "required when metrics are enabled",
-			})
+			errs = append(errs, fieldError("observability.metrics.path", "required when metrics are enabled"))
 		}
 	}
 
 	// Tracing validation
 	if c.Tracing.Enabled {
 		if c.Tracing.Endpoint == "" {
-			errs = append(errs, ValidationError{
-				Field:   "observability.tracing.endpoint",
-				Message: "required when tracing is enabled",
-			})
+			errs = append(errs, fieldError("observability.tracing.endpoint", "required when tracing is enabled"))
 		}
 
 		if c.Tracing.SampleRate < 0 || c.Tracing.SampleRate > 1 {
-			errs = append(errs, ValidationError{
-				Field:   "observability.tracing.sample_rate",
-				Message: fmt.Sprintf("must be between 0 and 1, got %f", c.Tracing.SampleRate),
-			})
+			errs = append(errs, fieldError("observability.tracing.sample_rate", fmt.Sprintf("must be between 0 and 1, got %f", c.Tracing.SampleRate)))
 		}
 	}
 
 	return errs
 }
 
-func (c *VocabularyConfig) validate() ValidationErrors {
-	var errs ValidationErrors
+func (c *VocabularyConfig) validate() []error {
+	var errs []error
 
 	if len(c.Languages) == 0 {
-		errs = append(errs, ValidationError{
-			Field:   "vocabulary.languages",
-			Message: "required",
-		})
+		errs = append(errs, fieldError("vocabulary.languages", "required"))
 	}
 
 	if len(c.Domains) == 0 {
-		errs = append(errs, ValidationError{
-			Field:   "vocabulary.domains",
-			Message: "required",
-		})
+		errs = append(errs, fieldError("vocabulary.domains", "required"))
 	}
 
 	return errs
